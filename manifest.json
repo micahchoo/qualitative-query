@@ -1,0 +1,10 @@
+{
+  "id": "qualitative-query",
+  "name": "Qualitative Query",
+  "version": "0.3.7",
+  "minAppVersion": "1.11.4",
+  "description": "Find source passages with saved questions and Jev scoring, then connect them with native block embeds.",
+  "author": "Micah",
+  "isDesktopOnly": false,
+  "authorUrl": "https://github.com/micahchoo"
+}

@@ -1,0 +1,15 @@
+node_modules/
+*.zip
+models/embeddings/model.safetensors
+dist/
+release/
+docs/pipeline-runs/
+# Local vault-derived audits are not plugin source or public release material.
+docs/JEV-RETRIEVAL-REVIEW.md
+docs/jev-retrieval-review.json
+docs/retrieval-depth-*.json
+data.json
+score-cache-id.json
+scores-v1.json
+*.download
+docs/VALIDATION.md

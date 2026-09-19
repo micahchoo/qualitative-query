@@ -1,0 +1,13 @@
+.qq-view { border: 1px solid var(--background-modifier-border); border-radius: 8px; padding: 0.8em 1em; margin: 0.8em 0; }
+.qq-status { color: var(--text-muted); font-size: var(--font-ui-small); }
+.qq-error { color: var(--text-error); }
+.qq-warning { color: var(--text-warning); }
+.qq-result { padding: 0.65em 0; border-top: 1px solid var(--background-modifier-border); }
+.qq-result:first-of-type { border-top: 0; }
+.qq-result-meta { color: var(--text-muted); font-size: var(--font-ui-smaller); display: flex; gap: 0.5em; align-items: baseline; flex-wrap: wrap; }
+.qq-result-meta a { color: var(--text-accent); }
+.qq-score { margin-left: auto; }
+.qq-breadcrumb { opacity: 0.8; }
+.qq-source { color: var(--text-muted); }
+.qq-expand { margin-left: 0.5em; }
+.qq-local-candidates { margin-top: 0.8em; color: var(--text-muted); font-size: var(--font-ui-small); }

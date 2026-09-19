@@ -1,0 +1,20 @@
+Qualitative Query
+
+Plugin source code: MIT. See LICENSE.
+
+Bundled third-party components:
+
+* @huggingface/tokenizers 0.2.0: Apache License 2.0.
+  The compiled embedding worker includes this package.
+  See TOKENIZERS-LICENSE.txt in the distribution.
+  Source: https://github.com/huggingface/tokenizers.js
+
+* minishlab/potion-base-8M: MIT, as declared by the pinned model card.
+  Revision: bf8b056651a2c21b8d2565580b8569da283cab23.
+  See embeddings/README.md and embeddings/MODEL2VEC-LICENSE.txt.
+  The model card identifies its upstream model and training data.
+  Source: https://huggingface.co/minishlab/potion-base-8M
+
+These licences do not grant rights to vault notes, user-authored queries,
+or source passages selected by the plugin. Those retain their own rights.
+Vaults and review captures are not included in release packages.
