@@ -37,7 +37,7 @@ Update the version in these files:
 Add the matching `minAppVersion` entry to `versions.json`.
 Preserve existing compatibility entries.
 Update `docs/RELEASE-NOTES.md` for the same version.
-Use a bare version tag, such as `0.3.7`, without a `v` prefix.
+Use a bare version tag, such as `0.3.8`, without a `v` prefix.
 
 The current minimum is 1.11.4 because the plugin uses Obsidian secret storage introduced in that version.
 Mobile testing remains outstanding. Do not describe mobile behavior as tested.
@@ -66,7 +66,7 @@ It writes assets under `release/`.
 Check the intended tag before publishing:
 
 ```sh
-npm run release:check -- 0.3.7
+npm run release:check -- 0.3.8
 ```
 
 For a clean-build check, repeat the build and compare `release/SHA256SUMS`.
@@ -107,8 +107,8 @@ Then publish the branch and matching tag:
 
 ```sh
 git push origin main
-git tag 0.3.7
-git push origin 0.3.7
+git tag 0.3.8
+git push origin 0.3.8
 ```
 
 Keep README claims aligned with the version people can install.
@@ -123,8 +123,8 @@ Only then does it publish the release.
 
 ```sh
 gh run watch --repo micahchoo/qualitative-query
-gh release view 0.3.7 --repo micahchoo/qualitative-query
-gh release download 0.3.7 --repo micahchoo/qualitative-query --dir /tmp/qualitative-query-release
+gh release view 0.3.8 --repo micahchoo/qualitative-query
+gh release download 0.3.8 --repo micahchoo/qualitative-query --dir /tmp/qualitative-query-release
 cd /tmp/qualitative-query-release
 sha256sum -c SHA256SUMS
 gh attestation verify main.js --repo micahchoo/qualitative-query

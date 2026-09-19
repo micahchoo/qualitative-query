@@ -1,6 +1,6 @@
 # Testing status
 
-Release candidate: **0.3.7**. Checks performed on 2026-09-19.
+Release candidate: **0.3.8**. Checks performed on 2026-09-19.
 
 ## Automated checks
 
@@ -27,7 +27,7 @@ It does not replace an Obsidian check of browser workers, network access, or acc
 
 Earlier development checks covered query rendering, baking, block embeds, source backlinks, and the query origin link in Obsidian.
 The archived screenshot shows the earlier query builder, before the wording update.
-These checks do not establish a fresh community-store installation of version 0.3.7.
+These checks do not establish a fresh community-store installation of version 0.3.8.
 
 ## Before submission
 

@@ -1,4 +1,4 @@
-# Qualitative Query 0.3.7
+# Qualitative Query 0.3.8
 
 Find source passages with saved questions, score them with Jev, and bake selections as native block embeds.
 
