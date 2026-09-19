@@ -66,7 +66,7 @@ const obsidian={Modal:class{},Plugin,Component,MarkdownRenderChild,TFile,Markdow
   return {status:200,json:{model:body.model,answers,usage:{input_tokens:20,output_tokens:0}},headers:{}};
 },parseYaml:()=>({})};
 const moduleObject={exports:{}};
-vm.runInNewContext(fs.readFileSync(process.argv[2],'utf8'),{module:moduleObject,exports:moduleObject.exports,require:(name)=>{assert.equal(name,'obsidian');return obsidian;},console,setTimeout,clearTimeout,setInterval,clearInterval,window:{setTimeout,clearTimeout,setInterval,clearInterval},createEl:()=>new Element(),document:{createElement:()=>new Element()},URL,AbortController,TextEncoder,performance,crypto:require('node:crypto').webcrypto});
+vm.runInNewContext(fs.readFileSync(process.argv[2],'utf8'),{module:moduleObject,exports:moduleObject.exports,require:(name)=>{assert.equal(name,'obsidian');return obsidian;},console,setTimeout,clearTimeout,setInterval,clearInterval,window:{setTimeout,clearTimeout,setInterval,clearInterval},createEl:()=>new Element(),document:{createElement:()=>{throw new Error("Use Obsidian createEl helpers");}},URL,AbortController,TextEncoder,performance,crypto:require('node:crypto').webcrypto});
 (async()=>{
   const plugin=new moduleObject.exports.default();
   await plugin.onload();
@@ -78,7 +78,7 @@ vm.runInNewContext(fs.readFileSync(process.argv[2],'utf8'),{module:moduleObject,
   assert.match(el.textContent,/key|provider|configure/i);
   assert.equal(requests.length,0);
   // A store install has no sibling worker file. Exercise the worker carried in main.js.
-  const workerSource = await plugin.embeddingIndex().assets.readWorker();
+  const workerSource = await plugin.retrieval.semantic.assets.readWorker();
   assert.ok(workerSource.length > 1000);
   const responses = [];
   const workerContext = vm.createContext({ArrayBuffer,TextEncoder,TextDecoder,postMessage:message=>responses.push(message)});

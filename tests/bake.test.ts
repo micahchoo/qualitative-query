@@ -1,5 +1,6 @@
 import {describe,it,expect} from 'vitest';
-import {planBlockIds,safeTitle} from '../src/bake';
+import {planBlockIds} from '../src/bake';
+import {safeTitle} from '../src/notes';
 import {parseMarkdown} from '../src/markdown';
 import {queryMarkdown,PRESETS} from '../src/builder';
 import {parseQuery} from '../src/query';

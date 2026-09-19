@@ -1,3 +1,4 @@
+import type { RetrievalResult } from "./retrieval";
 import type { ScoreCache } from "./score-cache";
 import { MAX_CANDIDATES } from "./limits";
 import { shortlist } from "./search";
@@ -129,7 +130,7 @@ export class QueryEngine {
     /** Include provider/model identity when an engine is reused across clients. */
     private readonly cacheNamespace = "",
     private readonly persistentCache?: Pick<ScoreCache, "get" | "set"> & Partial<Pick<ScoreCache, "getMany">>,
-    private readonly retrieve: (question: string, blocks: Block[], limit: number) => Candidate[] | Promise<Candidate[]> = shortlist,
+    private readonly retrieve: (question: string, blocks: Block[], limit: number) => RetrievalResult | Promise<RetrievalResult> = (question, blocks, limit) => ({ candidates: shortlist(question, blocks, limit) }),
   ) {}
 
   clearCache(): void { this.cache.clear(); }
@@ -149,13 +150,15 @@ export class QueryEngine {
     try { context = await this.readContext(spec.contextPaths); }
     catch (error) { return { status: "error", candidates: [], judgements: [], error: error instanceof Error ? error.message : String(error) }; }
     if (context.length > MAX_CONTEXT_CHARS) return { status: "error", candidates: [], judgements: [], error: "The selected context is too large for one evaluation. Remove some context notes or split the query." };
-    const candidates = dedupeCandidates(await this.retrieve(spec.question, corpus, Math.min(MAX_CANDIDATES, Math.max(1, candidateLimit))));
+    const retrieval = await this.retrieve(spec.question, corpus, Math.min(MAX_CANDIDATES, Math.max(1, candidateLimit)));
+    const candidates = dedupeCandidates(retrieval.candidates);
+    const warning = (message?: string) => [retrieval.warning, message].filter(Boolean).join(" ") || undefined;
     this.assertCurrent(generation);
-    if (!candidates.length) return { status: "empty", candidates, judgements: [] };
+    if (!candidates.length) return { status: "empty", candidates, judgements: [], warning: warning() };
     if (!this.client) {
       const ranked = [...candidates].sort((a, b) => (b.retrievalScore ?? b.lexicalScore) - (a.retrievalScore ?? a.lexicalScore) || a.id.localeCompare(b.id));
       return { status: "ready", selection: "local", candidates,
-        warning: "Local matches. Add a Jev API key in settings to select and order passages by how well they answer your question.",
+        warning: warning("Local matches. Add a Jev API key in settings to select and order passages by how well they answer your question."),
         judgements: ranked.slice(0, spec.limit ?? limit).map(candidate => ({ candidate, score: candidate.retrievalScore ?? candidate.lexicalScore, contribution: "other", scores: {} })),
       };
     }
@@ -189,7 +192,7 @@ export class QueryEngine {
     const publish = () => {
       if (Date.now() - lastPartial >= 250 || completed === judgeable.length) {
         lastPartial = Date.now();
-        onPartial?.({ status: "ready", selection: "jev", candidates, judgements: selection(), warning: "Still checking passages. Results may change." });
+        onPartial?.({ status: "ready", selection: "jev", candidates, judgements: selection(), warning: warning("Still checking passages. Results may change.") });
       }
     };
     const pending = judgeable.filter(candidate => {
@@ -216,10 +219,12 @@ export class QueryEngine {
     if (!judgements.length) {
       const result: WarningResult = { status: "empty", candidates, judgements: [], error: skipped.length ? "No checked passages met the minimum score. Broaden the question or lower its threshold." : "No passages met the minimum score. Broaden the question or lower its threshold." };
       if (skipped.length) result.warning = `${skipped.length} passage${skipped.length === 1 ? " was" : "s were"} skipped because they exceed the model input limit.`;
+      result.warning = warning(result.warning);
       return result;
     }
     const result: WarningResult = { status: "ready", selection: "jev", candidates, judgements: selection() };
     if (skipped.length) result.warning = `${skipped.length} passage${skipped.length === 1 ? " was" : "s were"} skipped because they exceed the model input limit.`;
+    result.warning = warning(result.warning);
     return result;
   }
 

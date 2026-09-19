@@ -1,11 +1,8 @@
+import { createUniqueNote } from "./notes";
 import { TFile, type App } from "obsidian";
 import type { Block, QueryResult, QuerySpec } from "./types";
 
 export const BAKED_FOLDER = "Baked queries";
-export function safeTitle(title: string): string {
-  return Array.from(title, char => char.charCodeAt(0) < 32 ? " " : char).join("").replace(/[\\/:*?"<>|#[\]^]/g, " ").replace(/\s+/g, " ").trim().slice(0, 100) || "Query";
-}
-
 /** Validate every range before editing. Edits are applied bottom-up to preserve offsets. */
 export function planBlockIds(source: string, blocks: Block[], makeId = () => `qq-${crypto.randomUUID()}`): { text: string; ids: Map<string, string> } {
   const eol = source.includes("\r\n") ? "\r\n" : "\n";
@@ -44,18 +41,6 @@ export function planBlockIds(source: string, blocks: Block[], makeId = () => `qq
     if (edit.insert) lines.splice(edit.line+1,0,...edit.insert);
   }
   return {text:lines.join(eol),ids};
-}
-
-export async function createUniqueNote(app: App, folder: string, title: string, text: string): Promise<TFile> {
-  let current = "";
-  for (const part of folder.split("/").filter(Boolean)) {
-    current = current ? `${current}/${part}` : part;
-    if (!app.vault.getAbstractFileByPath(current)) await app.vault.createFolder(current);
-  }
-  const base = `${folder ? folder + "/" : ""}${safeTitle(title)}`;
-  let path = `${base}.md`, n = 2;
-  while (app.vault.getAbstractFileByPath(path)) path = `${base} ${n++}.md`;
-  return app.vault.create(path,text);
 }
 
 export async function bakeNote(app: App, result: QueryResult, spec: QuerySpec, queryPath: string): Promise<TFile> {

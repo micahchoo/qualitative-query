@@ -186,7 +186,7 @@ it("starts 16 requests in retrieval order, reduces concurrency on throttling, an
     active++; peak = Math.max(peak, active);
     pending.push(() => { active--; resolve({answers:{relevant:{noul:.8}}}); });
   }));
-  const retrieval = () => corpus.map((b,i)=>({...b,lexicalScore:40-i}));
+  const retrieval = () => ({ candidates: corpus.map((b,i)=>({...b,lexicalScore:40-i})) });
   const engine = new QueryEngine({rank},()=>corpus,()=>[],"",undefined,retrieval);
   const partial = vi.fn();
   const run = engine.run({...spec,contextPaths:[],criteria:{mode:"generic"}},1000,6,.5,undefined,partial);
@@ -245,4 +245,15 @@ it("promotes legacy location scores using batched lookups without API calls", as
   expect(rank).not.toHaveBeenCalled();expect(cache.get).not.toHaveBeenCalled();
   expect(cache.set).toHaveBeenCalledTimes(1);
   expect(JSON.parse([...stored.keys()][0])).toMatchObject({keyVersion:2,passage:'conflict evidence'});
+});
+
+it("preserves retrieval warnings through partial and final Jev results", async () => {
+  const corpus = [block("a", "a.md", "Conflict is a disagreement.")];
+  const engine = new QueryEngine({ rank: async () => ({ answers: { relevant: { noul: 0.9 } } }) },
+    () => corpus, () => [], "", undefined,
+    () => ({ candidates: corpus.map(candidate => ({ ...candidate, lexicalScore: 1 })), warning: "Keyword fallback for this question." }));
+  const partial = vi.fn();
+  const result = await engine.run({ ...spec, contextPaths: [], criteria: { mode: "generic" } }, 10, 6, 0.5, undefined, partial);
+  expect(result.warning).toBe("Keyword fallback for this question.");
+  expect(partial.mock.calls[0][0].warning).toContain("Keyword fallback for this question.");
 });

@@ -1,5 +1,5 @@
 import { Modal, Notice, Setting, type App } from "obsidian";
-import { createUniqueNote } from "./bake";
+import { createUniqueNote } from "./notes";
 
 export const PRESETS: Record<string,{name:string;instructions:string;yes:string;no:string}> = {
   relevant:{name:"Relevant passages",instructions:"Select passages that directly answer the question with substantive content.",yes:"The passage contributes an answer, explanation, or specific example.",no:"It only mentions the topic or is unrelated."},

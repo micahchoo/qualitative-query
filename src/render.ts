@@ -16,6 +16,8 @@ export async function renderResult(
   component: Component,
   expand?: Expansion,
 ): Promise<void> {
+  let active = true;
+  component.register(() => { active = false; });
   container.empty();
   container.addClass("qq-view");
   if (result.warning) container.createDiv({ cls: "qq-warning", text: result.warning });
@@ -25,6 +27,7 @@ export async function renderResult(
   }
   const visibleRanges: Array<{ path: string; start: number; end: number }> = [];
   for (const judgement of result.judgements) {
+    if (!active) return;
     const original = judgement.candidate;
     let adjacent = spec.adjacent ?? 0;
     const initial = adjacent && expand ? expand(original, adjacent) : original;
@@ -46,6 +49,7 @@ export async function renderResult(
     let markdownChild: Component | undefined;
     let serial = 0;
     const show = async (block: Block): Promise<void> => {
+      if (!active) return;
       const version = ++serial;
       if (markdownChild) component.removeChild(markdownChild);
       const child = new Component();
@@ -53,19 +57,26 @@ export async function renderResult(
       component.addChild(child);
       const stage = createEl("div");
       stage.addClass("qq-source-content");
-      await MarkdownRenderer.render(app, inertQueryBlocks(block.renderText ?? block.text), stage, block.path, child);
-      if (version !== serial) return;
+      try {
+        await MarkdownRenderer.render(app, inertQueryBlocks(block.renderText ?? block.text), stage, block.path, child);
+      } catch {
+        if (active && version === serial) content.setText("Could not render this passage. Open its source note.");
+        return;
+      }
+      if (!active || version !== serial) return;
       content.empty();
       content.appendChild(stage);
     };
     component.register(() => { serial++; });
     await show(initial);
+    if (!active) return;
     if (expand) {
       const button = item.createEl("button", { cls: "qq-expand", text: "Show nearby text" });
       component.registerDomEvent(button, "click", () => {
+        if (!active) return;
         adjacent = adjacent ? 0 : 1;
         button.setText(adjacent ? "Hide nearby text" : "Show nearby text");
-        void show(adjacent ? expand(original, adjacent) : original).catch(() => { content.setText("Could not render this passage. Open its source note."); });
+        void show(adjacent ? expand(original, adjacent) : original);
       });
     }
   }

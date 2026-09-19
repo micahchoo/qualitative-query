@@ -9,6 +9,7 @@ export class EmbeddingIndex {
   private worker?: Worker;
   private ready?: Promise<void>;
   private stopped = false;
+  private failure?: Error;
   private serial = 0;
   private pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void; timer: number }>();
   private indexed = new Map<string, Block>();
@@ -18,6 +19,7 @@ export class EmbeddingIndex {
 
   load(): Promise<void> {
     if (this.stopped) return Promise.reject(new Error("Embedding index is closed."));
+    if (this.failure) return Promise.reject(this.failure);
     return this.ready ??= this.initialize();
   }
 
@@ -79,6 +81,8 @@ export class EmbeddingIndex {
   }
 
   private fail(error: Error): void {
+    this.failure = error;
+    this.status = "Using keyword search. Select Download search model to restore search by meaning.";
     this.worker?.terminate(); this.worker = undefined;
     for (const pending of this.pending.values()) { window.clearTimeout(pending.timer); pending.reject(asError(error)); }
     this.pending.clear();

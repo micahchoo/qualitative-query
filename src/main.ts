@@ -5,7 +5,7 @@ import { bakeNote, BAKED_FOLDER } from "./bake";
 import { Notice, Component, MarkdownRenderChild, Plugin, TFile, type MarkdownPostProcessorContext, type TAbstractFile } from "obsidian";
 import { EmbeddingIndex } from "./embeddings";
 import { downloadEmbeddings } from "./embedding-assets";
-import { shortlistAsync, hybridShortlist } from "./search";
+import { LocalRetrieval } from "./retrieval";
 import { ScoreCache } from "./score-cache";
 import { VaultIndex } from "./indexer";
 import { parseQuery, resolveContext } from "./query";
@@ -104,7 +104,6 @@ class QueryView extends MarkdownRenderChild {
         }
       }
       if (!current()) return;
-      if (this.plugin.embeddingWarning) result.warning = [result.warning, this.plugin.embeddingWarning].filter(Boolean).join(" ");
       await this.display(result, spec, current, true);
     } catch (error) {
       if (!current()) return;
@@ -159,12 +158,14 @@ export default class QualitativeQueryPlugin extends Plugin {
   private fileTimers = new Map<string, number>();
   private exclusionKey = "";
   private scoreCache?: ScoreCache;
-  private embeddings?: EmbeddingIndex;
-  private embeddingDownload?: Promise<void>;
-  embeddingWarning = "";
+  private retrieval!: LocalRetrieval;
 
   async onload(): Promise<void> {
     await this.loadSettings();
+    this.retrieval = new LocalRetrieval(() => new EmbeddingIndex({
+      read: name => this.app.vault.adapter.readBinary(`${this.pluginDirectory()}/embeddings/${name}`),
+      readWorker: async () => EMBEDDING_WORKER_SOURCE,
+    }), () => downloadEmbeddings(this.app.vault.adapter, this.pluginDirectory()));
     this.addCommand({ id: "build-query", name: "Ask your vault", callback: () => new QueryBuilder(this.app, this.settings.queryFolder).open() });
     this.addRibbonIcon("search", "Ask your vault", () => new QueryBuilder(this.app, this.settings.queryFolder).open());
     const directory = this.manifest?.dir ?? `${this.app.vault.configDir}/plugins/qualitative-query`;
@@ -255,40 +256,18 @@ export default class QualitativeQueryPlugin extends Plugin {
     try {
       this.client = this.settings.apiKey.trim() ? new JevClient(this.settings.apiKey, this.settings.model) : null;
     } catch (error) { this.client = null; this.clientError = error instanceof Error ? error.message : String(error); }
-    if (this.index) this.engine = new QueryEngine(this.client, () => this.index.blocks.filter(block => !QUERY_FENCE.test(block.text)), path => this.contextBlocks(path), `${SCORING_VERSION}:${TYPESAFE_ENDPOINT}:${this.settings.model}`, this.scoreCache, (question, blocks, limit) => this.retrieve(question, blocks, limit));
+    if (this.index) this.engine = new QueryEngine(this.client, () => this.index.blocks.filter(block => !QUERY_FENCE.test(block.text)), path => this.contextBlocks(path), `${SCORING_VERSION}:${TYPESAFE_ENDPOINT}:${this.settings.model}`, this.scoreCache, (question, blocks, limit) => this.retrieval.search(question, blocks, limit));
     this.scheduleQueries();
   }
 
   private pluginDirectory(): string { return this.manifest?.dir ?? `${this.app.vault.configDir}/plugins/qualitative-query`; }
 
-  embeddingStatus(): string { return this.embeddings?.status ?? "About 31 MB from Hugging Face. Runs on your device."; }
+  embeddingStatus(): string { return this.retrieval.status; }
 
-  private embeddingIndex(): EmbeddingIndex {
-    if (!this.embeddings) {
-      const adapter = this.app.vault.adapter;
-      const directory = this.pluginDirectory();
-      this.embeddings = new EmbeddingIndex({ read: name => adapter.readBinary(`${directory}/embeddings/${name}`), readWorker: async () => EMBEDDING_WORKER_SOURCE });
-    }
-    return this.embeddings;
-  }
-
-  private async retrieve(question: string, blocks: Block[], limit: number) {
-    const pool = Math.max(limit * 4, 32);
-    const semantic = this.embeddingIndex().search(question, blocks, pool).catch(() => null);
-    const [keywords, hits] = await Promise.all([shortlistAsync(question, blocks, pool), semantic]);
-    if (hits) {
-      this.embeddingWarning = "";
-      return hybridShortlist(question, blocks, hits, limit, keywords);
-    }
-    this.embeddingWarning = "Using keyword search. For related wording, download the search model in settings.";
-    return keywords.slice(0, limit);
-  }
-
-  restoreEmbeddings(): Promise<void> {
-    return this.embeddingDownload ??= downloadEmbeddings(this.app.vault.adapter, this.pluginDirectory()).then(() => {
-      this.embeddings?.dispose(); this.embeddings = undefined; this.embeddingWarning = "";
-      this.invalidateViews(); this.scheduleQueries();
-    }).finally(() => { this.embeddingDownload = undefined; });
+  async restoreEmbeddings(): Promise<void> {
+    await this.retrieval.restore();
+    if (this.stopped) return;
+    this.invalidateViews(); this.scheduleQueries();
   }
 
   private async contextBlocks(path: string): Promise<Block[]> {
@@ -350,7 +329,7 @@ export default class QualitativeQueryPlugin extends Plugin {
     for (const timer of this.fileTimers.values()) window.clearTimeout(timer);
     this.fileTimers.clear();
     this.engine?.dispose();
-    this.embeddings?.dispose();
+    this.retrieval?.dispose();
     void this.scoreCache?.close();
     for (const view of [...this.views]) view.unload();
     this.autoViews.clear();
