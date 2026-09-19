@@ -16,12 +16,12 @@ export function planBlockIds(source: string, blocks: Block[], makeId = () => `qq
   const ranges: Block[] = [];
   for (const block of blocks) {
     if (ids.has(block.id)) continue;
-    if (block.kind === "heading" || block.kind === "yaml") throw new Error("Headings and frontmatter cannot be baked as exact block embeds. Choose passage results instead.");
-    if (ranges.some(b=>b.lineStart<=block.lineEnd && block.lineStart<=b.lineEnd)) throw new Error("Overlapping passages cannot be baked together.");
+    if (block.kind === "heading" || block.kind === "yaml") throw new Error("Headings and frontmatter cannot be saved as passage embeds. Use passage results instead.");
+    if (ranges.some(b=>b.lineStart<=block.lineEnd && block.lineStart<=b.lineEnd)) throw new Error("These passages overlap. Refresh the question before saving.");
     ranges.push(block);
     const start = block.lineStart - 1, end = block.lineEnd - 1;
     if (start < 0 || end >= lines.length || lines.slice(start,end+1).join("\n") !== block.text.replace(/\r\n/g,"\n")) {
-      throw new Error(`Source changed: ${block.path}. Refresh the query before baking.`);
+      throw new Error(`Source changed: ${block.path}. Refresh the query before saving passages.`);
     }
     const inlineLine = block.kind === "list" ? start : end;
     let id = (block.kind === "paragraph" || block.kind === "list") ? lines[inlineLine].match(/\s\^([A-Za-z0-9-]+)\s*$/)?.[1] : undefined;
@@ -59,7 +59,7 @@ export async function createUniqueNote(app: App, folder: string, title: string, 
 }
 
 export async function bakeNote(app: App, result: QueryResult, spec: QuerySpec, queryPath: string): Promise<TFile> {
-  if (!result.judgements.length) throw new Error("There are no selected passages to bake.");
+  if (!result.judgements.length) throw new Error("No passages to save. Open a question and wait for results.");
   const grouped = new Map<string, Block[]>();
   for (const {candidate} of result.judgements) grouped.set(candidate.path,[...(grouped.get(candidate.path) ?? []),candidate]);
   const plans: Array<{file:TFile;before:string;after:string;ids:Map<string,string>}> = [];
@@ -72,7 +72,7 @@ export async function bakeNote(app: App, result: QueryResult, spec: QuerySpec, q
   }
   // Vault.process rechecks the latest contents, avoiding overwriting concurrent edits.
   for (const plan of plans) if (plan.before !== plan.after) await app.vault.process(plan.file, current => {
-    if (current !== plan.before) throw new Error(`Source changed: ${plan.file.path}. Refresh before baking. Any IDs already added are safe to keep.`);
+    if (current !== plan.before) throw new Error(`Source changed: ${plan.file.path}. Refresh before saving passages. Any IDs already added are safe to keep.`);
     return plan.after;
   });
   // Source writes finish before Obsidian's asynchronous Markdown indexing.
@@ -82,7 +82,7 @@ export async function bakeNote(app: App, result: QueryResult, spec: QuerySpec, q
     const blocks = app.metadataCache.getFileCache(plan.file)?.blocks;
     return [...plan.ids.values()].some(id => !blocks?.[id]);
   })) {
-    if (Date.now() >= deadline) throw new Error("Obsidian is still indexing the source block IDs. Wait a moment, refresh the query, and bake again. No baked note was created.");
+    if (Date.now() >= deadline) throw new Error("Obsidian is still indexing the source block IDs. Wait a moment, refresh the question, and select Save passages again. No selection note was created.");
     await new Promise(resolve => window.setTimeout(resolve, 50));
   }
   const outputPath = `${BAKED_FOLDER}/note.md`;
@@ -91,7 +91,7 @@ export async function bakeNote(app: App, result: QueryResult, spec: QuerySpec, q
     return "!" + app.fileManager.generateMarkdownLink(plan.file,outputPath,`#^${plan.ids.get(candidate.id)}`);
   });
   const query = app.vault.getAbstractFileByPath(queryPath);
-  const origin = query instanceof TFile ? `[Source query](${query.path.split("/").map(encodeURIComponent).join("/")})` : queryPath;
-  const text = `# ${spec.question.replace(/\r?\n/g," ")}\n\nFrom ${origin} · ${new Date().toISOString()}\n\nSelection and order are fixed. Embedded source passages remain live.\n\n${embeds.join("\n\n")}\n`;
+  const origin = query instanceof TFile ? `[Saved question](${query.path.split("/").map(encodeURIComponent).join("/")})` : queryPath;
+  const text = `# ${spec.question.replace(/\r?\n/g," ")}\n\nFrom ${origin} · ${new Date().toISOString()}\n\nThese passages stay in this order. Their text updates when the source notes change.\n\n${embeds.join("\n\n")}\n`;
   return createUniqueNote(app,BAKED_FOLDER,spec.question,text);
 }

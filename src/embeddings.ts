@@ -12,7 +12,7 @@ export class EmbeddingIndex {
   private pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void; timer: number }>();
   private indexed = new Map<string, Block>();
   private queue: Promise<unknown> = Promise.resolve();
-  status = "Embeddings load when a query opens.";
+  status = "The search model loads when you open a question.";
   constructor(private readonly assets: Assets) {}
 
   load(): Promise<void> {
@@ -21,7 +21,7 @@ export class EmbeddingIndex {
   }
 
   private async initialize(): Promise<void> {
-    this.status = "Loading small embedding model…";
+    this.status = "Loading search model…";
     try {
       const [source, weights, tokenizer, config] = await Promise.all([
         this.assets.readWorker(), this.assets.read("model.safetensors"), this.assets.read("tokenizer.json"), this.assets.read("tokenizer_config.json"),
@@ -37,8 +37,8 @@ export class EmbeddingIndex {
       };
       this.worker.onerror = () => this.fail(new Error("Embedding worker failed. Keyword retrieval remains available."));
       await this.call("load", { weights, tokenizer: JSON.parse(new TextDecoder().decode(tokenizer)), config: JSON.parse(new TextDecoder().decode(config)) }, [weights]);
-      this.status = "POTION-8M ready · background worker";
-    } catch (error) { this.status = "Embeddings unavailable; using keywords. Restore the embedding download in settings."; this.fail(error instanceof Error ? error : new Error(String(error))); throw error; }
+      this.status = "Search model ready. Runs on your device.";
+    } catch (error) { this.status = "Using keyword search. Select Download search model to restore search by meaning."; this.fail(error instanceof Error ? error : new Error(String(error))); throw error; }
   }
 
   search(question: string, blocks: Block[], limit: number): Promise<SemanticHit[]> {

@@ -26,7 +26,7 @@ It does not replace an Obsidian check of browser workers, network access, or acc
 ## Manual desktop evidence
 
 Earlier development checks covered query rendering, baking, block embeds, source backlinks, and the query origin link in Obsidian.
-The README screenshot shows the actual query builder.
+The archived screenshot shows the earlier query builder, before the wording update.
 These checks do not establish a fresh community-store installation of version 0.3.7.
 
 ## Before submission

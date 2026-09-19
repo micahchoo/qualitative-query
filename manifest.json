@@ -3,7 +3,7 @@
   "name": "Qualitative Query",
   "version": "0.3.7",
   "minAppVersion": "1.11.4",
-  "description": "Find source passages with saved questions and Jev scoring, then connect them with native block embeds.",
+  "description": "Ask your vault a question. Connect the passages that answer it.",
   "author": "Micah",
   "isDesktopOnly": false,
   "authorUrl": "https://github.com/micahchoo"

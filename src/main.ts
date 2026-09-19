@@ -81,7 +81,7 @@ class QueryView extends MarkdownRenderChild {
             status = document.createElement("div"); status.className = "qq-status qq-progress";
             this.containerEl.prepend(status);
           }
-          status.textContent = `Selecting passages: ${completed}/${total} scored · ${Math.floor((Date.now() - started) / 1000)}s elapsed. ${this.plugin.client ? "Scoring with Jev." : "Local retrieval."}`;
+          status.textContent = this.plugin.client ? `Jev is checking passages: ${completed}/${total} · ${Math.floor((Date.now() - started) / 1000)}s` : "Finding passages locally…";
         };
         const timer = window.setInterval(showProgress, 1000);
         try {
@@ -122,14 +122,14 @@ class QueryView extends MarkdownRenderChild {
       if (allowBake && result.status === "ready" && result.judgements.length) {
         const tools = document.createElement("div");
         tools.className = "qq-bake-actions";
-        const button = tools.createEl("button", { text: "Bake note" });
-        tools.createEl("small", { text: " Saves selected blocks as live embeds; adds missing block IDs to sources. Expanded neighbours are not included." });
+        const button = tools.createEl("button", { text: "Save passages" });
+        tools.createEl("small", { text: " Creates a note with these passages linked to their sources. Adds missing block IDs to source notes. Nearby context is not saved." });
         content.registerDomEvent(button, "click", async () => {
           if (!current()) return;
           button.disabled = true;
           try {
             const file = await bakeNote(this.plugin.app, result, spec, this.sourcePath);
-            new Notice("Baked note created. Open a source note's Backlinks to see the connection.");
+            new Notice("Passages saved. Open a source note’s Backlinks to see the connection.");
             await this.plugin.app.workspace.getLeaf(true).openFile(file, { state: { mode: "preview" } });
           } catch (error) { new Notice(error instanceof Error ? error.message : String(error)); button.disabled = false; }
         });
@@ -164,8 +164,8 @@ export default class QualitativeQueryPlugin extends Plugin {
 
   async onload(): Promise<void> {
     await this.loadSettings();
-    this.addCommand({ id: "build-query", name: "Build a query", callback: () => new QueryBuilder(this.app, this.settings.queryFolder).open() });
-    this.addRibbonIcon("search", "Build a qualitative query", () => new QueryBuilder(this.app, this.settings.queryFolder).open());
+    this.addCommand({ id: "build-query", name: "Ask your vault", callback: () => new QueryBuilder(this.app, this.settings.queryFolder).open() });
+    this.addRibbonIcon("search", "Ask your vault", () => new QueryBuilder(this.app, this.settings.queryFolder).open());
     const directory = this.manifest?.dir ?? `${this.app.vault.configDir}/plugins/qualitative-query`;
     const cachePath = `${directory}/scores-v1.json`;
     const adapter = this.app.vault.adapter;
@@ -221,7 +221,7 @@ export default class QualitativeQueryPlugin extends Plugin {
     }));
     this.addSettingTab(new SettingsTab(this.app, this));
     this.addCommand({ id: "reindex-vault", name: "Reindex vault", callback: () => void this.scan() });
-    this.addCommand({ id: "refresh-queries", name: "Refresh open queries", callback: () => this.scheduleQueries() });
+    this.addCommand({ id: "refresh-queries", name: "Refresh open questions", callback: () => this.scheduleQueries() });
   }
 
   private mount(el: HTMLElement, ctx: MarkdownPostProcessorContext, source?: string, autoKey?: string): QueryView {
@@ -259,7 +259,7 @@ export default class QualitativeQueryPlugin extends Plugin {
 
   private pluginDirectory(): string { return this.manifest?.dir ?? `${this.app.vault.configDir}/plugins/qualitative-query`; }
 
-  embeddingStatus(): string { return this.embeddings?.status ?? "POTION-8M · approximately 31 MB download · runs in a background worker"; }
+  embeddingStatus(): string { return this.embeddings?.status ?? "About 31 MB from Hugging Face. Runs on your device."; }
 
   private embeddingIndex(): EmbeddingIndex {
     if (!this.embeddings) {
@@ -278,7 +278,7 @@ export default class QualitativeQueryPlugin extends Plugin {
       this.embeddingWarning = "";
       return hybridShortlist(question, blocks, hits, limit, keywords);
     }
-    this.embeddingWarning = "Embeddings unavailable; showing keyword candidates. Restore the embedding download in settings.";
+    this.embeddingWarning = "Using keyword search. For related wording, download the search model in settings.";
     return keywords.slice(0, limit);
   }
 

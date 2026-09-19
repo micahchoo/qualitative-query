@@ -73,6 +73,6 @@ it('bakes in selection order with source and query links, without overwriting an
  const file=await bakeNote(app,result,{question:'Question',folder:'Queries',contextPaths:[],criteria:{mode:'generic'}},'Queries/q.md');
  const output=texts.get(file.path)!;
  expect(file.path).toBe('Baked queries/Question 2.md');expect(texts.get('Baked queries/Question.md')).toBe('Keep me');
- expect(output).toContain('[Source query](Queries/q.md)');expect(output.indexOf('![[b.md#^qq-')).toBeLessThan(output.indexOf('![[a.md#^qq-'));
+ expect(output).toContain('[Saved question](Queries/q.md)');expect(output.indexOf('![[b.md#^qq-')).toBeLessThan(output.indexOf('![[a.md#^qq-'));
  for(const path of ['a.md','b.md'])expect(texts.get(path)).toMatch(/ \^qq-[a-f0-9-]+$/);
 });

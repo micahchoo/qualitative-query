@@ -155,7 +155,7 @@ export class QueryEngine {
     if (!this.client) {
       const ranked = [...candidates].sort((a, b) => (b.retrievalScore ?? b.lexicalScore) - (a.retrievalScore ?? a.lexicalScore) || a.id.localeCompare(b.id));
       return { status: "ready", selection: "local", candidates,
-        warning: "Local retrieval only. Add a Jev API key for qualitative selection and ordering.",
+        warning: "Local matches. Add a Jev API key in settings to select and order passages by how well they answer your question.",
         judgements: ranked.slice(0, spec.limit ?? limit).map(candidate => ({ candidate, score: candidate.retrievalScore ?? candidate.lexicalScore, contribution: "other", scores: {} })),
       };
     }
@@ -189,7 +189,7 @@ export class QueryEngine {
     const publish = () => {
       if (Date.now() - lastPartial >= 250 || completed === judgeable.length) {
         lastPartial = Date.now();
-        onPartial?.({ status: "ready", selection: "jev", candidates, judgements: selection(), warning: "Scoring continues; selections may change." });
+        onPartial?.({ status: "ready", selection: "jev", candidates, judgements: selection(), warning: "Still checking passages. Results may change." });
       }
     };
     const pending = judgeable.filter(candidate => {
@@ -214,7 +214,7 @@ export class QueryEngine {
     }));
     this.assertCurrent(generation);
     if (!judgements.length) {
-      const result: WarningResult = { status: "empty", candidates, judgements: [], error: skipped.length ? "No passages were evaluated above the relevance threshold." : "The decision model found no passages above the relevance threshold." };
+      const result: WarningResult = { status: "empty", candidates, judgements: [], error: skipped.length ? "No checked passages met the minimum score. Broaden the question or lower its threshold." : "No passages met the minimum score. Broaden the question or lower its threshold." };
       if (skipped.length) result.warning = `${skipped.length} passage${skipped.length === 1 ? " was" : "s were"} skipped because they exceed the model input limit.`;
       return result;
     }

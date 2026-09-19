@@ -20,7 +20,7 @@ export async function renderResult(
   container.addClass("qq-view");
   if (result.warning) container.createDiv({ cls: "qq-warning", text: result.warning });
   if (result.status !== "ready") {
-    container.createDiv({ cls: result.status === "error" ? "qq-error" : "qq-status", text: result.error ?? "No matching passages found." });
+    container.createDiv({ cls: result.status === "error" ? "qq-error" : "qq-status", text: result.error ?? "No matching passages found. Try a broader question." });
     return;
   }
   const visibleRanges: Array<{ path: string; start: number; end: number }> = [];
@@ -61,10 +61,10 @@ export async function renderResult(
     component.register(() => { serial++; });
     await show(initial);
     if (expand) {
-      const button = item.createEl("button", { cls: "qq-expand", text: "Expand context" });
+      const button = item.createEl("button", { cls: "qq-expand", text: "Show nearby text" });
       component.registerDomEvent(button, "click", () => {
         adjacent = adjacent ? 0 : 1;
-        button.setText(adjacent ? "Collapse context" : "Expand context");
+        button.setText(adjacent ? "Hide nearby text" : "Show nearby text");
         void show(adjacent ? expand(original, adjacent) : original).catch(() => { content.setText("Could not render this passage. Open its source note."); });
       });
     }
@@ -74,5 +74,5 @@ export async function renderResult(
 export function renderLoading(container: HTMLElement): void {
   container.empty();
   container.addClass("qq-view");
-  container.createDiv({ cls: "qq-status", text: "Selecting passages…" });
+  container.createDiv({ cls: "qq-status", text: "Finding passages…" });
 }

@@ -2,7 +2,7 @@
   "name": "qualitative-query",
   "version": "0.3.7",
   "private": true,
-  "description": "A block-level qualitative query view for Obsidian",
+  "description": "Ask your vault a question. Connect the passages that answer it.",
   "scripts": {
     "build": "node esbuild.config.mjs production",
     "dev": "node esbuild.config.mjs development",

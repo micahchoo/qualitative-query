@@ -1,19 +1,22 @@
 # User guide
 
-Qualitative Query assembles source passages under saved questions.
-Jev selects passages. The plugin does not generate a written answer.
+**Ask your vault a question. Connect the passages that answer it.**
 
-## Build a query
+Local search finds possible matches. Jev checks which passages answer your question.
+Save the passages in a note to connect their sources through embeds and backlinks.
+The plugin shows original text. It does not generate a written answer.
 
-Run **Qualitative Query: Build a query** from the command palette or ribbon.
+## Ask your vault
+
+Run **Qualitative Query: Ask your vault** from the command palette or ribbon.
 Enter a question, then choose a selection preset.
 Each preset supplies fixed instructions and inclusion/exclusion criteria.
 The builder does not ask a model to write the rubric.
 
-Under **Refine selection**, you can replace either criterion.
+Under **Refine matches**, you can replace either criterion.
 For example, ask for experiences that changed a practice and exclude advice without a described experience.
 
-Select **Save and open query**.
+Select **Save question and search**.
 The new note opens in Reading view and starts retrieval.
 With Jev configured, uncached passages are sent for scoring.
 Saving a second query with the same title creates a separate note.
@@ -68,33 +71,33 @@ Passing the threshold does not guarantee display: the result limit still applies
 
 Up to 16 requests run concurrently per plugin instance.
 Throttling reduces concurrency; successful requests gradually restore it.
-Partial results can change while scoring continues. Bake becomes available after the run completes.
+Partial results can change while scoring continues. Save passages becomes available after the run completes.
 
-**Expand context** adds nearby units in source order, within the current section.
+**Show nearby text** adds nearby units in source order, within the current section.
 Expansion uses source structure and does not make another model call.
 Source links open the original note at the passage.
 
-## Bake a selection
+## Connect the passages
 
-Select **Bake note** after scoring completes.
+Select **Save passages** after scoring completes.
 The plugin writes a new note in `Baked queries` with the selected blocks in their current order.
-The query remains live. The baked selection does not change with later query results.
+The query remains live. The saved selection does not change with later query results.
 
-Native embeds keep source text live and create backlinks to the baked note.
-Baking reuses existing block IDs and adds missing IDs to source Markdown.
+Native embeds keep source text live and create backlinks to the selection note.
+Saving passages reuses existing block IDs and adds missing IDs to source Markdown.
 The plugin checks source ranges, then waits for Obsidian to index the IDs.
 The link back to the query uses its full path to avoid same-name ambiguity.
 
-Expanded neighbours are not baked.
+Expanded neighbours are not saved.
 A nested list embed targets the source item, not the plugin's assembled ancestor display.
-Headings and frontmatter cannot be baked as exact passage embeds.
+Headings and frontmatter cannot be saved as exact passage embeds.
 The plugin rejects stale selections instead of editing a different passage.
 
-A repeated bake creates a new note. It does not overwrite your earlier selection.
+Saving again creates a new note. It does not overwrite your earlier selection.
 Changes to several source files cannot be atomic together.
-If a later file changes during baking, already-added IDs remain and are safe to keep.
+If a later file changes while saving passages, already-added IDs remain and are safe to keep.
 
-Review before baking. The plugin has no keep/remove/reorder review interface yet.
+Read the passages before saving them. The plugin has no keep/remove/reorder review interface yet.
 Use the [review pipeline](PIPELINE.md) for an auditable manual review.
 
 ## Cache and refresh
@@ -116,13 +119,13 @@ Embedding files can sync with the plugin folder; in-memory passage vectors rebui
 
 | Symptom | Action |
 | --- | --- |
-| Results say Local match | Add a Jev key for qualitative scoring. |
-| Embeddings unavailable | Use Download / restore embeddings; keyword retrieval remains available. |
+| Results say Local match | Add a Jev API key to check which passages answer your question. |
+| Embeddings unavailable | Use Download search model; keyword retrieval remains available. |
 | No passages qualify | Read the criteria and threshold; this does not prove the vault lacks useful material. |
 | Scoring is slow | Start with one open query; new candidates need API calls. Cached scores reuse earlier work. |
-| Source changed during baking | Refresh the query, then bake again. |
-| Obsidian is still indexing IDs | Wait briefly, refresh, and retry. No broken baked note is created on timeout. |
-| Missing block in an older bake | Check whether the source or ID was removed. Reopen after indexing completes. |
+| Source changed while saving passages | Refresh the query, then save again. |
+| Obsidian is still indexing IDs | Wait briefly, refresh, and retry. No broken selection note is created on timeout. |
+| Missing block in an saved selection | Check whether the source or ID was removed. Reopen after indexing completes. |
 | Unexpected source attribution | Read the surrounding source; the note title does not identify every passage's speaker. |
 
 ## Data and costs

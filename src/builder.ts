@@ -10,7 +10,7 @@ export const PRESETS: Record<string,{name:string;instructions:string;yes:string;
 };
 export function queryMarkdown(question:string,preset:string,include:string,exclude:string):string {
   const p=PRESETS[preset];
-  if(!p || !question.trim()) throw new Error("Enter a question and choose a selection preset.");
+  if(!p || !question.trim()) throw new Error("Enter a question and choose what to look for.");
   const line=(s:string)=>s.replace(/[\r\n]+/g," ").replace(/`/g,"'").trim();
   // Fixed templates; the builder does not generate prose or infer hidden context.
   return `# ${line(question)}\n\n\`\`\`qualitative-query\nquestion: ${line(question)}\nmode: generic\ninstructions: ${p.instructions}\ntrue: ${line(include)||p.yes}\nfalse: ${line(exclude)||p.no}\nlimit: 6\nthreshold: 0.5\nadjacent: 0\n\`\`\`\n`;
@@ -18,16 +18,17 @@ export function queryMarkdown(question:string,preset:string,include:string,exclu
 export class QueryBuilder extends Modal {
   constructor(app:App,private readonly folder:string){super(app);}
   onOpen():void {
-    const el=this.contentEl;el.empty();el.createEl("h2",{text:"Build a query"});
+    const el=this.contentEl;el.empty();el.createEl("h2",{text:"Ask your vault"});
+    el.createEl("p",{text:"Find passages that answer your question. Save them in a note to connect their sources."});
     let question="",preset="relevant",include="",exclude="";
-    new Setting(el).setName("Question").addTextArea(t=>t.setPlaceholder("How can we live with grief without seeking closure?").onChange(v=>question=v));
+    new Setting(el).setName("Question").addTextArea(t=>t.setPlaceholder("How does solitude differ from loneliness?").onChange(v=>question=v));
     new Setting(el).setName("Look for").addDropdown(d=>{for(const [id,p] of Object.entries(PRESETS))d.addOption(id,p.name);d.onChange(v=>{preset=v;defaults.setText(`${PRESETS[v].yes} Excludes: ${PRESETS[v].no}`);});});
     const defaults=el.createEl("p",{text:`${PRESETS.relevant.yes} Excludes: ${PRESETS.relevant.no}`});
-    const details=el.createEl("details");details.createEl("summary",{text:"Refine selection (optional)"});
-    new Setting(details).setName("Include when").setDesc("Replaces the preset's inclusion criterion.").addTextArea(t=>t.onChange(v=>include=v));
-    new Setting(details).setName("Exclude when").setDesc("Replaces the preset's exclusion criterion.").addTextArea(t=>t.onChange(v=>exclude=v));
-    el.createEl("p",{text:"Whole vault · no context notes · 6 results · no adjacent expansion. Uses your configured retrieval window. Saving opens the live query and starts scoring when Jev is configured."});
-    new Setting(el).addButton(b=>b.setButtonText("Save and open query").setCta().onClick(async()=>{
+    const details=el.createEl("details");details.createEl("summary",{text:"Refine matches (optional)"});
+    new Setting(details).setName("Include when").setDesc("What must a passage explain or show? Leave blank to use the default.").addTextArea(t=>t.onChange(v=>include=v));
+    new Setting(details).setName("Exclude when").setDesc("What should be left out? Leave blank to use the default.").addTextArea(t=>t.onChange(v=>exclude=v));
+    el.createEl("p",{text:"Saves your question and finds up to 6 passages. Results update as your notes change. With a Jev key, scoring sends passages to TypeSafe."});
+    new Setting(el).addButton(b=>b.setButtonText("Save question and search").setCta().onClick(async()=>{
       b.setDisabled(true);
       try {
         const text=queryMarkdown(question,preset,include,exclude);
