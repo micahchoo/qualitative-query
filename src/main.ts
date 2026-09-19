@@ -1,3 +1,4 @@
+import { parseObject } from "./validation";
 declare const EMBEDDING_WORKER_SOURCE: string;
 import { QueryBuilder } from "./builder";
 import { bakeNote, BAKED_FOLDER } from "./bake";
@@ -78,7 +79,7 @@ class QueryView extends MarkdownRenderChild {
           if (!current()) return;
           let status = this.containerEl.querySelector<HTMLElement>(".qq-progress");
           if (!status) {
-            status = document.createElement("div"); status.className = "qq-status qq-progress";
+            status = createEl("div"); status.className = "qq-status qq-progress";
             this.containerEl.prepend(status);
           }
           status.textContent = this.plugin.client ? `Jev is checking passages: ${completed}/${total} · ${Math.floor((Date.now() - started) / 1000)}s` : "Finding passages locally…";
@@ -114,13 +115,13 @@ class QueryView extends MarkdownRenderChild {
   private async display(result: QueryResult, spec: QuerySpec, current: () => boolean, allowBake = false): Promise<void> {
     const content = new Component();
     this.addChild(content);
-    const stage = document.createElement("div");
+    const stage = createEl("div");
     stage.addClass("qq-view");
     try {
       await renderResult(this.plugin.app, stage, result, spec, content, (candidate, adjacent) =>
         expandBlock(candidate, this.plugin.index.blocksForPath(candidate.path), adjacent));
       if (allowBake && result.status === "ready" && result.judgements.length) {
-        const tools = document.createElement("div");
+        const tools = createEl("div");
         tools.className = "qq-bake-actions";
         const button = tools.createEl("button", { text: "Save passages" });
         tools.createEl("small", { text: " Creates a note with these passages linked to their sources. Adds missing block IDs to source notes. Nearby context is not saved." });
@@ -179,8 +180,9 @@ export default class QualitativeQueryPlugin extends Plugin {
         const identityPath = `${directory}/score-cache-id.json`;
         let identity: string;
         if (await adapter.exists(identityPath)) {
-          identity = JSON.parse(await adapter.read(identityPath)).id;
-          if (typeof identity !== "string" || !/^[a-f0-9-]{36}$/.test(identity)) throw new Error("Invalid score cache identity file.");
+          const storedIdentity = parseObject(await adapter.read(identityPath)).id;
+          if (typeof storedIdentity !== "string" || !/^[a-f0-9-]{36}$/.test(storedIdentity)) throw new Error("Invalid score cache identity file.");
+          identity = storedIdentity;
         } else {
           identity = crypto.randomUUID();
           await adapter.write(identityPath, JSON.stringify({ id: identity }));

@@ -3,7 +3,7 @@ import type { Block, QueryResult, QuerySpec } from "./types";
 
 export const BAKED_FOLDER = "Baked queries";
 export function safeTitle(title: string): string {
-  return title.replace(/[\\/:*?"<>|#\[\]^\x00-\x1f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 100) || "Query";
+  return Array.from(title, char => char.charCodeAt(0) < 32 ? " " : char).join("").replace(/[\\/:*?"<>|#[\]^]/g, " ").replace(/\s+/g, " ").trim().slice(0, 100) || "Query";
 }
 
 /** Validate every range before editing. Edits are applied bottom-up to preserve offsets. */

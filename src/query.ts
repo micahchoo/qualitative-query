@@ -13,7 +13,7 @@ function frontmatter(text: string): Record<string, string | number | boolean | s
   if (!text.startsWith("---\n")) return {};
   const end = text.indexOf("\n---", 4); if (end < 0) throw new Error("Invalid query frontmatter: closing delimiter is missing.");
   try {
-    const parsed = parseYaml(text.slice(4, end));
+    const parsed: unknown = parseYaml(text.slice(4, end));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Frontmatter must be a YAML object.");
     return parsed as Record<string, string | number | boolean | string[]>;
   } catch (error) { throw new Error(`Invalid query frontmatter: ${error instanceof Error ? error.message : String(error)}`); }

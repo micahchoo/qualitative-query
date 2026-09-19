@@ -1,3 +1,4 @@
+import { parseObject, record } from "./validation";
 import { Tokenizer } from "@huggingface/tokenizers";
 
 /** POTION's published inference: token lookup, mean pooling, L2 normalization. */
@@ -10,12 +11,12 @@ export class StaticEmbeddings {
     const view = new DataView(weights);
     const headerSize = Number(view.getBigUint64(0, true));
     if (!Number.isSafeInteger(headerSize) || headerSize < 1 || headerSize > 1_000_000 || headerSize + 8 > weights.byteLength) throw new Error("Invalid embedding model header.");
-    const header = JSON.parse(new TextDecoder().decode(new Uint8Array(weights, 8, headerSize)));
+    const header = parseObject(new TextDecoder().decode(new Uint8Array(weights, 8, headerSize)));
     const tensor = header.embeddings;
-    if (tensor?.dtype !== "F32" || tensor.shape?.length !== 2 || tensor.shape[1] !== 256 || tensor.shape[0] !== 29528 || tensor.data_offsets?.[0] !== 0 || tensor.data_offsets[1] !== tensor.shape[0] * tensor.shape[1] * 4) throw new Error("Unsupported embedding model. Expected pinned POTION-8M weights.");
-    this.rows = tensor.shape[0]; this.dimensions = tensor.shape[1];
+    if (!record(tensor) || !Array.isArray(tensor.shape) || !Array.isArray(tensor.data_offsets) || tensor.dtype !== "F32" || tensor.shape?.length !== 2 || tensor.shape[1] !== 256 || tensor.shape[0] !== 29528 || tensor.data_offsets?.[0] !== 0 || tensor.data_offsets[1] !== 29528 * 256 * 4) throw new Error("Unsupported embedding model. Expected pinned POTION-8M weights.");
+    this.rows = 29528; this.dimensions = 256;
     const start = 8 + headerSize;
-    if (start % 4 || start + tensor.data_offsets[1] !== weights.byteLength) throw new Error("Incomplete embedding model weights.");
+    if (start % 4 || start + 29528 * 256 * 4 !== weights.byteLength) throw new Error("Incomplete embedding model weights.");
     this.values = new Float32Array(weights, start);
     this.tokenizer = new Tokenizer(tokenizer, config);
   }

@@ -1,3 +1,4 @@
+import { asError, parseObject, record } from "./validation";
 import type { Block } from "./types";
 
 export interface SemanticHit { id: string; score: number; }
@@ -29,14 +30,15 @@ export class EmbeddingIndex {
       if (this.stopped) throw new Error("Embedding index is closed.");
       const url = URL.createObjectURL(new Blob([source], { type: "application/javascript" }));
       try { this.worker = new Worker(url); } finally { URL.revokeObjectURL(url); }
-      this.worker.onmessage = ({ data }) => {
+      this.worker.onmessage = ({ data }: MessageEvent<unknown>) => {
+        if (!record(data) || typeof data.id !== "number") { this.fail(new Error("Invalid search response.")); return; }
         const pending = this.pending.get(data.id);
         if (!pending) return;
         window.clearTimeout(pending.timer); this.pending.delete(data.id);
-        if (data.error) pending.reject(new Error(data.error)); else pending.resolve(data.result);
+        if (typeof data.error === "string") pending.reject(new Error(data.error)); else pending.resolve(data.result);
       };
       this.worker.onerror = () => this.fail(new Error("Embedding worker failed. Keyword retrieval remains available."));
-      await this.call("load", { weights, tokenizer: JSON.parse(new TextDecoder().decode(tokenizer)), config: JSON.parse(new TextDecoder().decode(config)) }, [weights]);
+      await this.call("load", { weights, tokenizer: parseObject(new TextDecoder().decode(tokenizer)), config: parseObject(new TextDecoder().decode(config)) }, [weights]);
       this.status = "Search model ready. Runs on your device.";
     } catch (error) { this.status = "Using keyword search. Select Download search model to restore search by meaning."; this.fail(error instanceof Error ? error : new Error(String(error))); throw error; }
   }
@@ -54,7 +56,12 @@ export class EmbeddingIndex {
         await this.call("update", { rows: batch.map(block => ({ id: block.id, text: block.searchText || block.text })) });
       }
       this.indexed = current;
-      return await this.call("search", { question, limit }) as SemanticHit[];
+      const result = await this.call("search", { question, limit });
+      if (!Array.isArray(result)) throw new Error("Invalid search results.");
+      return (result as unknown[]).map(hit => {
+        if (!record(hit) || typeof hit.id !== "string" || typeof hit.score !== "number" || !Number.isFinite(hit.score)) throw new Error("Invalid search result.");
+        return { id: hit.id, score: hit.score };
+      });
     });
     this.queue = task.catch(() => undefined);
     return task;
@@ -67,13 +74,13 @@ export class EmbeddingIndex {
       const timer = window.setTimeout(() => this.fail(new Error("Embedding worker timed out; using keywords.")), 30_000);
       this.pending.set(id, { resolve, reject, timer });
       try { this.worker!.postMessage({ id, type, ...values }, transfer); }
-      catch (error) { window.clearTimeout(timer); this.pending.delete(id); reject(error); }
+      catch (error) { window.clearTimeout(timer); this.pending.delete(id); reject(asError(error)); }
     });
   }
 
   private fail(error: Error): void {
     this.worker?.terminate(); this.worker = undefined;
-    for (const pending of this.pending.values()) { window.clearTimeout(pending.timer); pending.reject(error); }
+    for (const pending of this.pending.values()) { window.clearTimeout(pending.timer); pending.reject(asError(error)); }
     this.pending.clear();
   }
 

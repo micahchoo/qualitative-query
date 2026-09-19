@@ -36,3 +36,10 @@ Check mobile behavior separately before making a tested mobile-support claim.
 
 After publication, check the GitHub workflow, downloaded release checksums, and build attestation.
 Community-directory review and acceptance remain separate steps.
+
+## Community review follow-up: 0.3.9
+
+The 0.3.8 community scan reproduced the build and accepted the network, dependency, and attestation checks.
+Version 0.3.9 addresses the reported source warnings and adds searchable settings definitions.
+The legacy settings renderer remains for Obsidian 1.11.4 compatibility.
+A new community scan must confirm its findings. Mobile testing remains outstanding.

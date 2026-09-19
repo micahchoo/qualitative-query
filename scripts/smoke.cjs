@@ -66,7 +66,7 @@ const obsidian={Modal:class{},Plugin,Component,MarkdownRenderChild,TFile,Markdow
   return {status:200,json:{model:body.model,answers,usage:{input_tokens:20,output_tokens:0}},headers:{}};
 },parseYaml:()=>({})};
 const moduleObject={exports:{}};
-vm.runInNewContext(fs.readFileSync(process.argv[2],'utf8'),{module:moduleObject,exports:moduleObject.exports,require:(name)=>{assert.equal(name,'obsidian');return obsidian;},console,setTimeout,clearTimeout,setInterval,clearInterval,window:{setTimeout,clearTimeout,setInterval,clearInterval},document:{createElement:()=>new Element()},URL,AbortController,TextEncoder,performance,crypto:require('node:crypto').webcrypto});
+vm.runInNewContext(fs.readFileSync(process.argv[2],'utf8'),{module:moduleObject,exports:moduleObject.exports,require:(name)=>{assert.equal(name,'obsidian');return obsidian;},console,setTimeout,clearTimeout,setInterval,clearInterval,window:{setTimeout,clearTimeout,setInterval,clearInterval},createEl:()=>new Element(),document:{createElement:()=>new Element()},URL,AbortController,TextEncoder,performance,crypto:require('node:crypto').webcrypto});
 (async()=>{
   const plugin=new moduleObject.exports.default();
   await plugin.onload();
@@ -81,7 +81,8 @@ vm.runInNewContext(fs.readFileSync(process.argv[2],'utf8'),{module:moduleObject,
   const workerSource = await plugin.embeddingIndex().assets.readWorker();
   assert.ok(workerSource.length > 1000);
   const responses = [];
-  const workerContext = vm.createContext({TextEncoder,TextDecoder,postMessage:message=>responses.push(message)});
+  const workerContext = vm.createContext({ArrayBuffer,TextEncoder,TextDecoder,postMessage:message=>responses.push(message)});
+  workerContext.self = workerContext;
   vm.runInContext(workerSource, workerContext);
   const weights = fs.readFileSync('models/embeddings/model.safetensors');
   workerContext.onmessage({data:{id:1,type:'load',weights:weights.buffer.slice(weights.byteOffset,weights.byteOffset+weights.byteLength),tokenizer:JSON.parse(fs.readFileSync('models/embeddings/tokenizer.json','utf8')),config:JSON.parse(fs.readFileSync('models/embeddings/tokenizer_config.json','utf8'))}});

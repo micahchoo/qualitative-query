@@ -150,7 +150,7 @@ export class ScoreCache {
         await new Promise<void>((resolve, reject) => {
           let removed = 0;
           const cursor = store.index("accessed").openCursor();
-          cursor.onerror = () => reject(cursor.error);
+          cursor.onerror = () => reject(cursor.error ?? new Error("Score cache cursor failed."));
           cursor.onsuccess = () => {
             const row = cursor.result;
             if (!row || removed >= excess) { state.count -= removed; resolve(); return; }
@@ -174,7 +174,7 @@ export class ScoreCache {
 }
 
 function request<T = unknown>(value: IDBRequest): Promise<T> {
-  return new Promise((resolve, reject) => { value.onsuccess = () => resolve(value.result); value.onerror = () => reject(value.error); });
+  return new Promise((resolve, reject) => { value.onsuccess = () => resolve(value.result as T); value.onerror = () => reject(value.error ?? new Error("Score cache request failed.")); });
 }
 function transactionDone(tx: IDBTransaction): Promise<void> {
   const done = new Promise<void>((resolve, reject) => {
@@ -188,7 +188,7 @@ function transactionDone(tx: IDBTransaction): Promise<void> {
 }
 
 async function hashKey(key: string): Promise<string> {
-  const subtle = globalThis.crypto?.subtle;
+  const subtle = window.crypto?.subtle;
   if (!subtle) throw new Error("Web Crypto SHA-256 is unavailable.");
   const bytes = await subtle.digest("SHA-256", new TextEncoder().encode(key));
   return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -209,14 +209,14 @@ function isSerializedEntry(value: unknown): value is SerializedEntry {
 function validateScore(value: unknown): CachedScore | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const candidate = value as Partial<CachedScore>;
-  if (typeof candidate.score !== "number" || !Number.isFinite(candidate.score) || typeof candidate.contribution !== "string" || !CONTRIBUTIONS.has(candidate.contribution as Contribution)) return undefined;
+  if (typeof candidate.score !== "number" || !Number.isFinite(candidate.score) || typeof candidate.contribution !== "string" || !CONTRIBUTIONS.has(candidate.contribution)) return undefined;
   if (typeof candidate.scores !== "object" || candidate.scores === null || Array.isArray(candidate.scores)) return undefined;
   const scores: Record<string, number> = {};
   for (const [name, score] of Object.entries(candidate.scores)) {
     if (typeof score !== "number" || !Number.isFinite(score)) return undefined;
     scores[name] = score;
   }
-  return { score: candidate.score, contribution: candidate.contribution as Contribution, scores };
+  return { score: candidate.score, contribution: candidate.contribution, scores };
 }
 
 function cloneScore(value: CachedScore): CachedScore {

@@ -8,6 +8,17 @@ Qualitative Query finds answers in your existing notes. It shows original passag
 2. **Read.** Open each source or show nearby text. Results update as your notes change.
 3. **Connect.** Select **Save passages** to create a note with source-linked passages. Backlinks connect the source notes to your selection.
 
+## See it work
+
+Ask a question, read matching passages, then save a note that connects their sources.
+These screenshots show an earlier version. “Build a query” is now “Ask your vault”; “Bake note” is now “Save passages”.
+
+![Ask a question and choose what to look for.](docs/img/query-builder.png)
+
+![Read original passages matching “What is artistry?”.](docs/img/passages.png)
+
+![Saved passages and their source connections in Obsidian’s local graph.](docs/img/connections.png)
+
 ## Start with a question
 
 1. Enable the plugin, then open its settings.
@@ -67,6 +78,7 @@ See [TypeSafe's privacy policy](https://typesafe.ai/legal/privacy-policy) for se
 
 Embeddings run locally. The explicit model download contacts Hugging Face and sends no vault text or Jev key.
 The worker code ships inside the plugin; no executable code is downloaded.
+To search across your vault, the plugin lists its files and reads Markdown notes outside your excluded folders.
 The plugin adds no telemetry. Its runtime reads vault files and stores scores in Obsidian's local IndexedDB storage.
 
 ## Installation and compatibility

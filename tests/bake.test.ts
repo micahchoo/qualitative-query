@@ -76,3 +76,7 @@ it('bakes in selection order with source and query links, without overwriting an
  expect(output).toContain('[Saved question](Queries/q.md)');expect(output.indexOf('![[b.md#^qq-')).toBeLessThan(output.indexOf('![[a.md#^qq-'));
  for(const path of ['a.md','b.md'])expect(texts.get(path)).toMatch(/ \^qq-[a-f0-9-]+$/);
 });
+
+it("removes control characters and bracket syntax from note titles", () => {
+ expect(safeTitle("A\u0000[B]\u001f^C")).toBe("A B C");
+});

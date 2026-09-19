@@ -51,7 +51,7 @@ export async function renderResult(
       const child = new Component();
       markdownChild = child;
       component.addChild(child);
-      const stage = document.createElement("div");
+      const stage = createEl("div");
       stage.addClass("qq-source-content");
       await MarkdownRenderer.render(app, inertQueryBlocks(block.renderText ?? block.text), stage, block.path, child);
       if (version !== serial) return;
