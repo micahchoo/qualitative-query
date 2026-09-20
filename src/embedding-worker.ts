@@ -1,3 +1,4 @@
+import { TopK } from "./top-k";
 import { record } from "./validation";
 import { cosine, StaticEmbeddings } from "./static-embeddings";
 let model: StaticEmbeddings | undefined;
@@ -28,16 +29,13 @@ worker.onmessage = ({ data }) => {
     } else if (type === "search") {
       if (typeof data.question !== "string" || typeof data.limit !== "number" || !Number.isInteger(data.limit) || data.limit < 1) throw new Error("Invalid search request.");
       const query = model.encode(data.question);
-      const best: Array<{ id: string; score: number }> = [];
+      const best = new TopK<{ id: string; score: number }>(data.limit, (a, b) => b.score - a.score || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
       for (const [key, vector] of vectors) {
         const score = cosine(query, vector);
         if (score < 0.15) continue;
-        const hit = { id: key, score };
-        let index = best.findIndex(other => score > other.score || score === other.score && key < other.id);
-        if (index < 0) index = best.length;
-        if (index < data.limit) { best.splice(index, 0, hit); if (best.length > data.limit) best.pop(); }
+        best.add({ id: key, score });
       }
-      result = best;
+      result = best.sorted();
     } else throw new Error("Unknown embedding request.");
     worker.postMessage({ id, result });
   } catch (error) { worker.postMessage({ id, error: error instanceof Error ? error.message : String(error) }); }

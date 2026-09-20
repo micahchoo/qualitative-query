@@ -1,3 +1,5 @@
+import { cooperative } from "./cooperative";
+import { cancelled, checkSignal } from "./work";
 import { asError, parseObject, record } from "./validation";
 import type { Block } from "./types";
 
@@ -13,7 +15,9 @@ export class EmbeddingIndex {
   private serial = 0;
   private pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void; timer: number }>();
   private indexed = new Map<string, Block>();
-  private queue: Promise<unknown> = Promise.resolve();
+  private queue: Array<{ run: () => Promise<void>; cancel: () => void }> = [];
+  private running = false;
+  private snapshot?: Block[];
   status = "The search model loads when you open a question.";
   constructor(private readonly assets: Assets) {}
 
@@ -45,28 +49,82 @@ export class EmbeddingIndex {
     } catch (error) { this.status = "Using keyword search. Restart local search to retry, or download the model if it is missing."; this.fail(error instanceof Error ? error : new Error(String(error))); throw error; }
   }
 
-  search(question: string, blocks: Block[], limit: number): Promise<SemanticHit[]> {
-    // Serial synchronization prevents concurrent queries from observing a partial index.
-    const task = this.queue.then(async () => {
-      await this.load();
-      const current = new Map(blocks.map(block => [block.id, block]));
-      const removed = [...this.indexed.keys()].filter(id => !current.has(id));
-      if (removed.length) await this.call("remove", { ids: removed });
-      const changed = blocks.filter(block => this.indexed.get(block.id) !== block);
+  search(question: string, blocks: Block[], limit: number, signal?: AbortSignal): Promise<SemanticHit[]> {
+    if (signal?.aborted) return Promise.reject(cancelled());
+    return new Promise((resolve, reject) => {
+      const abort = () => {
+        const index = this.queue.indexOf(job);
+        if (index >= 0) this.queue.splice(index, 1);
+        signal?.removeEventListener("abort", abort);
+        reject(cancelled());
+      };
+      const job = {
+        cancel: abort,
+        run: async () => {
+          try { resolve(await this.searchCurrent(question, blocks, limit, signal)); }
+          catch (error) { reject(asError(error)); }
+          finally { signal?.removeEventListener("abort", abort); }
+        },
+      };
+      signal?.addEventListener("abort", abort, { once: true });
+      this.queue.push(job);
+      this.pump();
+    });
+  }
+
+  private pump(): void {
+    if (this.running) return;
+    const job = this.queue.shift();
+    if (!job) return;
+    this.running = true;
+    void job.run().finally(() => { this.running = false; this.pump(); });
+  }
+
+  private async searchCurrent(question: string, blocks: Block[], limit: number, signal?: AbortSignal): Promise<SemanticHit[]> {
+    checkSignal(signal);
+    await this.load();
+    checkSignal(signal);
+    if (this.snapshot !== blocks) {
+      // The immutable corpus identity lets all questions share this synchronization.
+      this.snapshot = undefined;
+      const indexed = this.indexed;
+      const { removed, changed } = await cooperative((function* () {
+        const current = new Set<string>(), changed: Block[] = [], removed: string[] = [];
+        let visited = 0;
+        for (const block of blocks) {
+          current.add(block.id);
+          if (indexed.get(block.id) !== block) changed.push(block);
+          if (++visited % 128 === 0) yield;
+        }
+        for (const id of indexed.keys()) {
+          if (!current.has(id)) removed.push(id);
+          if (++visited % 128 === 0) yield;
+        }
+        return { removed, changed };
+      })(), signal, true);
+      if (removed.length) {
+        await this.call("remove", { ids: removed });
+        for (const id of removed) this.indexed.delete(id);
+        checkSignal(signal);
+      }
       for (let start = 0; start < changed.length; start += 128) {
+        checkSignal(signal);
         const batch = changed.slice(start, start + 128);
         await this.call("update", { rows: batch.map(block => ({ id: block.id, text: block.searchText || block.text })) });
+        // Track completed batches even if their original consumer was cancelled.
+        for (const block of batch) this.indexed.set(block.id, block);
       }
-      this.indexed = current;
-      const result = await this.call("search", { question, limit });
-      if (!Array.isArray(result)) throw new Error("Invalid search results.");
-      return (result as unknown[]).map(hit => {
-        if (!record(hit) || typeof hit.id !== "string" || typeof hit.score !== "number" || !Number.isFinite(hit.score)) throw new Error("Invalid search result.");
-        return { id: hit.id, score: hit.score };
-      });
+      checkSignal(signal);
+      this.snapshot = blocks;
+    }
+    checkSignal(signal);
+    const result = await this.call("search", { question, limit });
+    checkSignal(signal);
+    if (!Array.isArray(result)) throw new Error("Invalid search results.");
+    return (result as unknown[]).map(hit => {
+      if (!record(hit) || typeof hit.id !== "string" || typeof hit.score !== "number" || !Number.isFinite(hit.score)) throw new Error("Invalid search result.");
+      return { id: hit.id, score: hit.score };
     });
-    this.queue = task.catch(() => undefined);
-    return task;
   }
 
   private call(type: string, values: object, transfer: Transferable[] = []): Promise<unknown> {
@@ -88,5 +146,5 @@ export class EmbeddingIndex {
     this.pending.clear();
   }
 
-  dispose(): void { this.stopped = true; this.fail(new Error("Embedding index closed.")); this.indexed.clear(); }
+  dispose(): void { this.stopped = true; this.fail(new Error("Embedding index closed.")); this.indexed.clear(); this.snapshot = undefined; for (const job of [...this.queue]) job.cancel(); }
 }
