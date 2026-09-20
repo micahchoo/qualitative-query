@@ -24,6 +24,7 @@ const QUERY_FENCE = /^ {0,3}(?:`{3,}|~{3,})(?:qualitative-query|qq)\s*$/m;
 /** Each rendered query owns its subscriptions, async generation, and Markdown children. */
 class QueryView extends MarkdownRenderChild {
   private version = 0;
+  private run?: AbortController;
   private stopped = false;
   private saving = false;
   private content?: Component;
@@ -41,10 +42,11 @@ class QueryView extends MarkdownRenderChild {
     void this.refresh();
   }
 
-  invalidate(): void { if (!this.saving) this.version++; }
+  invalidate(): void { if (!this.saving) { this.version++; this.run?.abort(); } }
 
   onunload(): void {
     this.stopped = true;
+    this.run?.abort();
     this.invalidate();
     this.plugin.views.delete(this);
     if (this.autoKey && this.plugin.autoViews.get(this.autoKey) === this) this.plugin.autoViews.delete(this.autoKey);
@@ -53,6 +55,8 @@ class QueryView extends MarkdownRenderChild {
 
   async refresh(): Promise<void> {
     if (this.stopped || this.saving) return;
+    this.run?.abort();
+    const run = this.run = new AbortController();
     const version = ++this.version;
     const current = () => !this.stopped && version === this.version && !this.plugin.stopped;
     if (this.content) { this.removeChild(this.content); this.content = undefined; }
@@ -82,7 +86,7 @@ class QueryView extends MarkdownRenderChild {
           if (!current()) return;
           let status = this.containerEl.querySelector<HTMLElement>(".qq-progress");
           if (!status) {
-            status = createEl("div"); status.className = "qq-status qq-progress";
+            status = createDiv(); status.className = "qq-status qq-progress";
             this.containerEl.prepend(status);
           }
           status.textContent = this.plugin.client ? `Jev is checking passages: ${completed}/${total} · ${Math.floor((Date.now() - started) / 1000)}s` : "Finding passages locally…";
@@ -99,7 +103,7 @@ class QueryView extends MarkdownRenderChild {
                 await this.display(partial, spec, valid);
                 showProgress();
               }).catch(error => console.warn("Qualitative Query: partial rendering failed", error));
-            });
+            }, run.signal);
         } finally {
           window.clearInterval(timer);
           partialVersion++;
@@ -123,7 +127,7 @@ class QueryView extends MarkdownRenderChild {
     result = manual.result;
     const content = new Component();
     this.addChild(content);
-    const stage = createEl("div");
+    const stage = createDiv();
     stage.addClass("qq-view");
     try {
       await renderResult(this.plugin.app, stage, result, spec, content, (candidate, adjacent) =>
@@ -151,7 +155,7 @@ class QueryView extends MarkdownRenderChild {
         });
       }
       if (allowBake && result.status === "ready" && result.judgements.length) {
-        const tools = createEl("div");
+        const tools = createDiv();
         tools.className = "qq-bake-actions";
         const button = tools.createEl("button", { text: "Save passages" });
         tools.createEl("small", { text: " Creates a note with these passages linked to their sources. Adds missing block IDs to source notes. Nearby context is not saved." });
@@ -170,7 +174,7 @@ class QueryView extends MarkdownRenderChild {
             const file = await save();
             this.saving = false;
             saveStatus.setText(" Saved.");
-            new Notice("Passages saved. Open a source note’s Backlinks to see the connection.");
+            new Notice("Passages saved. Open a source note’s backlinks to see the connection.");
             await this.plugin.app.workspace.getLeaf(true).openFile(file, { state: { mode: "preview" } });
           } catch (error) {
             if (controller.signal.aborted) return;
@@ -205,6 +209,8 @@ export default class QualitativeQueryPlugin extends Plugin {
   private exclusionKey = "";
   private scoreCache?: ScoreCache;
   private retrieval!: LocalRetrieval;
+  private corpusSource?: Block[];
+  private corpus: Block[] = [];
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -265,8 +271,11 @@ export default class QualitativeQueryPlugin extends Plugin {
       else this.scheduleQueries();
     }));
     this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+      window.clearTimeout(this.fileTimers.get(oldPath));
+      this.fileTimers.delete(oldPath);
       this.index.remove(oldPath);
-      this.scheduleIndex(file);
+      if (file instanceof TFile && file.extension !== "md") { this.invalidateViews(); this.scheduleQueries(); }
+      else this.scheduleIndex(file);
     }));
     this.addSettingTab(new SettingsTab(this.app, this));
     this.addCommand({ id: "reindex-vault", name: "Reindex vault", callback: () => void this.scan() });
@@ -302,8 +311,17 @@ export default class QualitativeQueryPlugin extends Plugin {
     try {
       this.client = this.settings.apiKey.trim() ? new JevClient(this.settings.apiKey, this.settings.model) : null;
     } catch (error) { this.client = null; this.clientError = error instanceof Error ? error.message : String(error); }
-    if (this.index) this.engine = new QueryEngine(this.client, () => this.index.blocks.filter(block => !QUERY_FENCE.test(block.text)), path => readContextBlocks(this.app, path), `${SCORING_VERSION}:${TYPESAFE_ENDPOINT}:${this.settings.model}`, this.scoreCache, (question, blocks, limit) => this.retrieval.search(question, blocks, limit));
+    if (this.index) this.engine = new QueryEngine(this.client, () => this.searchableBlocks(), path => readContextBlocks(this.app, path), `${SCORING_VERSION}:${TYPESAFE_ENDPOINT}:${this.settings.model}`, this.scoreCache, (question, blocks, limit, signal) => this.retrieval.search(question, blocks, limit, signal));
     this.scheduleQueries();
+  }
+
+  private searchableBlocks(): Block[] {
+    const source = this.index.blocks;
+    if (source !== this.corpusSource) {
+      this.corpusSource = source;
+      this.corpus = source.filter(block => !QUERY_FENCE.test(block.text));
+    }
+    return this.corpus;
   }
 
   private pluginDirectory(): string { return this.manifest?.dir ?? `${this.app.vault.configDir}/plugins/qualitative-query`; }
@@ -374,6 +392,7 @@ export default class QualitativeQueryPlugin extends Plugin {
     this.engine?.dispose();
     this.retrieval?.dispose();
     this.index?.dispose();
+    this.corpusSource = undefined; this.corpus = [];
     void this.scoreCache?.close();
     for (const view of [...this.views]) view.unload();
     this.autoViews.clear();

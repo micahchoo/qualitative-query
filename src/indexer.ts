@@ -14,6 +14,7 @@ export class VaultIndex {
   private scanToken = 0;
   private stopped = false;
   private scanInFlight?: Promise<void>;
+  private exclusionSnapshot = "";
 
   constructor(private readonly vault: Vault, private readonly excluded: () => string[] = () => []) {}
 
@@ -32,6 +33,7 @@ export class VaultIndex {
 
   async indexFile(file: TFile): Promise<void> {
     if (this.stopped) return;
+    if (file.extension !== "md") { this.remove(file.path); return; }
     const path = file.path;
     const version = this.bumpPathVersion(path);
     if (this.isExcluded(path)) {
@@ -112,13 +114,16 @@ export class VaultIndex {
 
   private fileIsCurrent(file: TFile, path: string, mtime: number): boolean {
     if (file.path !== path || file.stat.mtime !== mtime) return false;
-    const getByPath = (this.vault as Vault & { getAbstractFileByPath?: (path: string) => unknown }).getAbstractFileByPath;
-    if (!getByPath) return true;
-    const current = getByPath.call(this.vault, path) as Partial<TFile> | null;
+    const vault = this.vault as Vault & { getAbstractFileByPath?: (path: string) => unknown };
+    if (!vault.getAbstractFileByPath) return true;
+    const current = vault.getAbstractFileByPath(path) as Partial<TFile> | null;
     return current === file || (!!current && current.path === path && current.stat?.mtime === mtime);
   }
 
   private removeExcludedFiles(): void {
+    const snapshot = JSON.stringify(this.excluded());
+    if (snapshot === this.exclusionSnapshot) return;
+    this.exclusionSnapshot = snapshot;
     let changed = false;
     for (const path of [...this.files.keys()]) {
       if (!this.isExcluded(path)) continue;
@@ -131,7 +136,7 @@ export class VaultIndex {
 
   private rebuildBlocks(): void {
     this.flatBlocks = [];
-    for (const file of this.files.values()) this.flatBlocks.push(...file.blocks);
+    for (const file of this.files.values()) for (const block of file.blocks) this.flatBlocks.push(block);
     this.blocksDirty = false;
   }
 

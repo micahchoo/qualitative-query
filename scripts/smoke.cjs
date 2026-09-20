@@ -66,7 +66,7 @@ const obsidian={Modal:class{},Plugin,Component,MarkdownRenderChild,TFile,Markdow
   return {status:200,json:{model:body.model,answers,usage:{input_tokens:20,output_tokens:0}},headers:{}};
 },parseYaml:()=>({})};
 const moduleObject={exports:{}};
-vm.runInNewContext(fs.readFileSync(process.argv[2],'utf8'),{module:moduleObject,exports:moduleObject.exports,require:(name)=>{assert.equal(name,'obsidian');return obsidian;},console,setTimeout,clearTimeout,setInterval,clearInterval,window:{setTimeout,clearTimeout,setInterval,clearInterval},createEl:()=>new Element(),document:{createElement:()=>{throw new Error("Use Obsidian createEl helpers");}},URL,AbortController,TextEncoder,performance,crypto:require('node:crypto').webcrypto});
+vm.runInNewContext(fs.readFileSync(process.argv[2],'utf8'),{module:moduleObject,exports:moduleObject.exports,require:(name)=>{assert.equal(name,'obsidian');return obsidian;},console,setTimeout,clearTimeout,setInterval,clearInterval,window:{setTimeout,clearTimeout,setInterval,clearInterval},createEl:()=>new Element(),createDiv:()=>new Element(),document:{createElement:()=>{throw new Error("Use Obsidian createEl helpers");}},URL,AbortController,TextEncoder,performance,crypto:require('node:crypto').webcrypto});
 (async()=>{
   const plugin=new moduleObject.exports.default();
   await plugin.onload();
@@ -111,6 +111,15 @@ vm.runInNewContext(fs.readFileSync(process.argv[2],'utf8'),{module:moduleObject,
   assert.equal(plugin.settings.embeddedModelDir,undefined);
   assert.equal(plugin.settings.model,'jev-1.13.0');
   assert.ok(requests.every(request=>request.url==='https://api.typesafe.ai/v1/systemone'));
+  // A modify timer must not reintroduce a source renamed to a non-Markdown file.
+  callbacks.get('modify')(source);
+  const previousPath = source.path;
+  source.path = 'Sources/Conflict.txt'; source.extension = 'txt';
+  callbacks.get('rename')(source, previousPath);
+  await new Promise(r=>setTimeout(r,700));
+  assert.equal(plugin.index.blocks.length,0);
+  assert.doesNotMatch(connectedEl.textContent,/revised definition/);
+  assert.equal(plugin.indexError,'');
   plugin.unload(); children.forEach(c=>c.unload());
   console.log('Bundled plugin smoke passed: startup, no-key guard, hosted rendering, live source refresh, legacy-settings migration, Jev-only transport, unload. Embedded worker executes from main.js with real model weights. All transport mocked.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

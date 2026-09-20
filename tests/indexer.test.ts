@@ -88,3 +88,35 @@ it("clears indexed passages and rejects stale individual commits on disposal", a
   index.dispose(); pending.resolve("Late"); await indexing;
   expect(index.blocks).toEqual([]); expect(index.blocksForPath("a.md")).toEqual([]);
 });
+
+it("does not repeat a full exclusion census for each reader of the same corpus", async () => {
+  const notes = Array.from({ length: 100 }, (_, i) => file(`${i}.md`, 1));
+  let exclusionReads = 0;
+  const index = new VaultIndex(vaultFor(notes, () => "Passage"), () => { exclusionReads++; return []; });
+  for (const note of notes) await index.indexFile(note as any);
+  const first = index.blocks;
+  exclusionReads = 0;
+  for (let i = 0; i < 50; i++) expect(index.blocks).toBe(first);
+  expect(exclusionReads).toBe(50);
+});
+
+it("refuses a renamed non-Markdown file when a delayed index callback arrives", async () => {
+  const note = file("source.md", 1);
+  const index = new VaultIndex(vaultFor([note], () => "A source passage."));
+  await index.indexFile(note as any);
+  const oldPath = note.path;
+  note.path = "source.txt"; note.extension = "txt";
+  index.remove(oldPath);
+  await index.indexFile(note as any);
+  expect(index.blocks).toEqual([]);
+});
+
+it("reads a corpus containing more source passages than the JS argument limit", async () => {
+  const note = file("large.md", 1);
+  const source = Array(150_000).fill("Passage.").join("\n\n");
+  const index = new VaultIndex(vaultFor([note], () => source));
+  await index.indexFile(note as any);
+  expect(index.blocks).toHaveLength(150_000);
+  expect(index.blocks.at(-1)?.lineStart).toBe(299_999);
+  index.dispose();
+});
