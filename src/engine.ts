@@ -1,3 +1,4 @@
+import { checkSignal, SharedWork } from "./work";
 import type { RetrievalResult } from "./retrieval";
 import type { ScoreCache } from "./score-cache";
 import { MAX_CANDIDATES } from "./limits";
@@ -56,7 +57,7 @@ class ConcurrencyGate {
   cancelStale(generation: number): void {
     const retained: QueueItem[] = [];
     for (const item of this.queue) {
-      if (item.generation < generation) item.reject(new QueryRunSuperseded());
+      if (item.generation < generation || !item.current()) item.reject(new QueryRunSuperseded());
       else retained.push(item);
     }
     this.queue = retained;
@@ -91,20 +92,26 @@ function dedupeRanges<T extends Block>(blocks: T[]): T[] {
   const selected: T[] = [];
   const ordered = [...blocks].sort((a, b) => a.path.localeCompare(b.path) || a.lineStart - b.lineStart || a.lineEnd - b.lineEnd);
   for (const block of ordered) {
-    const overlapping = selected.findIndex((other) => other.path === block.path && other.lineStart <= block.lineEnd && block.lineStart <= other.lineEnd);
-    if (overlapping < 0) { selected.push(block); continue; }
-    const existing = selected[overlapping];
-    if (span(block) > span(existing)) selected[overlapping] = block;
+    // Source-order sorting means only the last selected range can overlap.
+    const existing = selected[selected.length - 1];
+    if (!existing || existing.path !== block.path || existing.lineEnd < block.lineStart) { selected.push(block); continue; }
+    if (span(block) > span(existing)) selected[selected.length - 1] = block;
   }
   return selected.sort((a, b) => a.path.localeCompare(b.path) || a.lineStart - b.lineStart || a.id.localeCompare(b.id));
 }
 
 function dedupeCandidates(candidates: Candidate[]): Candidate[] {
   const selected: Candidate[] = [];
+  const ranges = new Map<string, Candidate[]>();
   // Score first so a broad ancestor cannot hide a better focused child.
   const ranked = [...candidates].sort((a, b) => (b.retrievalScore ?? b.lexicalScore) - (a.retrievalScore ?? a.lexicalScore) || span(a) - span(b) || a.id.localeCompare(b.id));
   for (const candidate of ranked) {
-    if (selected.some((other) => other.path === candidate.path && other.lineStart <= candidate.lineEnd && candidate.lineStart <= other.lineEnd)) continue;
+    const file = ranges.get(candidate.path) ?? [];
+    let low = 0, high = file.length;
+    while (low < high) { const mid = (low + high) >>> 1; if (file[mid].lineStart < candidate.lineStart) low = mid + 1; else high = mid; }
+    if ((low > 0 && file[low - 1].lineEnd >= candidate.lineStart) || (low < file.length && file[low].lineStart <= candidate.lineEnd)) continue;
+    file.splice(low, 0, candidate);
+    ranges.set(candidate.path, file);
     selected.push(candidate);
   }
   return selected;
@@ -118,7 +125,8 @@ function modelText(block: Block): string {
 
 export class QueryEngine {
   private cache = new Map<string, Judgement>();
-  private inFlight = new Map<string, { generation: number; promise: Promise<Judgement> }>();
+  private inFlight = new Map<string, SharedWork<Judgement>>();
+  private runs = new Set<AbortController>();
   private generation = 0;
   private disposed = false;
   private readonly gate = new ConcurrencyGate();
@@ -130,34 +138,47 @@ export class QueryEngine {
     /** Include provider/model identity when an engine is reused across clients. */
     private readonly cacheNamespace = "",
     private readonly persistentCache?: Pick<ScoreCache, "get" | "set"> & Partial<Pick<ScoreCache, "getMany">>,
-    private readonly retrieve: (question: string, blocks: Block[], limit: number) => RetrievalResult | Promise<RetrievalResult> = (question, blocks, limit) => ({ candidates: shortlist(question, blocks, limit), truncated: shortlist(question, blocks, limit + 1).length > limit }),
+    private readonly retrieve: (question: string, blocks: Block[], limit: number, signal?: AbortSignal) => RetrievalResult | Promise<RetrievalResult> = (question, blocks, limit) => ({ candidates: shortlist(question, blocks, limit), truncated: shortlist(question, blocks, limit + 1).length > limit }),
   ) {}
 
   clearCache(): void { this.cache.clear(); }
 
   invalidate(): void {
     this.generation++;
+    for (const run of this.runs) run.abort();
     this.gate.cancelStale(this.generation);
   }
 
   dispose(): void { this.disposed = true; this.invalidate(); this.cache.clear(); this.inFlight.clear(); }
 
-  async run(spec: QuerySpec, candidateLimit: number, limit: number, threshold: number, onProgress?: (completed: number, total: number) => void, onPartial?: (result: QueryResult) => void): Promise<QueryResult> {
+  async run(spec: QuerySpec, candidateLimit: number, limit: number, threshold: number, onProgress?: (completed: number, total: number) => void, onPartial?: (result: QueryResult) => void, signal?: AbortSignal): Promise<QueryResult> {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
+    this.runs.add(controller);
+    try { return await this.runOwned(spec, candidateLimit, limit, threshold, onProgress, onPartial, controller.signal); }
+    finally { controller.abort(); this.runs.delete(controller); signal?.removeEventListener("abort", abort); }
+  }
+
+  private async runOwned(spec: QuerySpec, candidateLimit: number, limit: number, threshold: number, onProgress: ((completed: number, total: number) => void) | undefined, onPartial: ((result: QueryResult) => void) | undefined, signal: AbortSignal): Promise<QueryResult> {
+    checkSignal(signal);
     if (this.disposed) return { status: "error", candidates: [], judgements: [], error: "The query engine is unavailable." };
     const generation = this.generation;
     const corpus = this.getBlocks();
     let context: string;
     try { context = await this.readContext(spec.contextPaths); }
     catch (error) { return { status: "error", candidates: [], judgements: [], error: error instanceof Error ? error.message : String(error) }; }
+    this.assertCurrent(generation, signal);
     if (context.length > MAX_CONTEXT_CHARS) return { status: "error", candidates: [], judgements: [], error: `Selected context is ${context.length.toLocaleString()} characters; the limit is ${MAX_CONTEXT_CHARS.toLocaleString()}. Choose specific blocks or sections, or remove context notes.` };
-    const retrieval = await this.retrieve(spec.question, corpus, Math.min(MAX_CANDIDATES, Math.max(1, candidateLimit)));
+    const retrieval = await this.retrieve(spec.question, corpus, Math.min(MAX_CANDIDATES, Math.max(1, candidateLimit)), signal);
     const candidates = dedupeCandidates(retrieval.candidates);
     const stats: QueryStats = { searchable: corpus.length, shortlisted: retrieval.candidates.length,
       overlapRemoved: retrieval.candidates.length - candidates.length, windowLimit: Math.min(MAX_CANDIDATES, Math.max(1, candidateLimit)),
       truncated: retrieval.truncated ?? false, checked: 0, cached: 0, shared: 0, requested: 0, retries: 0,
       skipped: 0, passed: 0, contextChars: context.length, threshold };
     const warning = (message?: string) => [retrieval.warning, message].filter(Boolean).join(" ") || undefined;
-    this.assertCurrent(generation);
+    this.assertCurrent(generation, signal);
     if (!candidates.length) return { status: "empty", candidates, judgements: [], stats, selection: this.client ? "jev" : "local", warning: warning() };
     if (!this.client) {
       const ranked = [...candidates].sort((a, b) => (b.retrievalScore ?? b.lexicalScore) - (a.retrievalScore ?? a.lexicalScore) || a.id.localeCompare(b.id));
@@ -182,11 +203,11 @@ export class QueryEngine {
     onProgress?.(completed, judgeable.length);
     const keys = judgeable.map(candidate => this.scoreKey(spec, candidate, context));
     const persisted = await this.readScores(keys);
-    this.assertCurrent(generation);
+    this.assertCurrent(generation, signal);
     // Preserve existing location-based entries; promote them lazily without rescoring.
     const missing = judgeable.filter((_, i) => !persisted.has(keys[i]) && !this.cache.has(keys[i]));
     const legacy = await this.readScores(missing.map(candidate => this.scoreKey(spec, candidate, context, true)));
-    this.assertCurrent(generation);
+    this.assertCurrent(generation, signal);
     for (const candidate of missing) {
       const value = legacy.get(this.scoreKey(spec, candidate, context, true));
       if (value) {
@@ -195,7 +216,7 @@ export class QueryEngine {
         await this.persistentCache?.set(key, value);
       }
     }
-    this.assertCurrent(generation);
+    this.assertCurrent(generation, signal);
     let lastPartial = -Infinity;
     const publish = () => {
       if (Date.now() - lastPartial >= 250 || completed === judgeable.length) {
@@ -213,17 +234,18 @@ export class QueryEngine {
     if (completed) { onProgress?.(completed, judgeable.length); publish(); }
     await Promise.all(pending.map(async (candidate) => {
       try {
-        const value = await this.judge(spec, candidate, context, generation, stats);
+        const value = await this.judge(spec, candidate, context, generation, stats, signal);
+        this.assertCurrent(generation, signal);
         accept(value);
       } catch (error) {
         if (error && typeof error === "object" && "code" in error && error.code === "INPUT_TOO_LARGE") { skipped.push(candidate); stats.skipped++; }
         else throw error;
       }
-      this.assertCurrent(generation);
+      this.assertCurrent(generation, signal);
       onProgress?.(++completed, judgeable.length);
       publish();
     }));
-    this.assertCurrent(generation);
+    this.assertCurrent(generation, signal);
     if (!judgements.length) {
       const result: WarningResult = { status: "empty", candidates, selection: "jev", judgements: [], belowThreshold: rejected(), stats: { ...stats }, error: skipped.length ? "No checked passages met the minimum score. Broaden the question or lower its threshold." : "No passages met the minimum score. Broaden the question or lower its threshold." };
       if (skipped.length) result.warning = `${skipped.length} passage${skipped.length === 1 ? " was" : "s were"} skipped because they exceed the model input limit.`;
@@ -240,7 +262,7 @@ export class QueryEngine {
     const blocks: Block[] = [];
     for (const path of paths) {
       const pathBlocks = (await this.getSourceBlocks(path)).filter((block) => block.path === path.split("#")[0]);
-      blocks.push(...dedupeRanges(pathBlocks));
+      for (const block of dedupeRanges(pathBlocks)) blocks.push(block);
     }
     return blocks.map(modelText).join("\n\n");
   }
@@ -260,8 +282,8 @@ export class QueryEngine {
     return values;
   }
 
-  private async judge(spec: QuerySpec, candidate: Candidate, context: string, generation: number, stats: QueryStats): Promise<Judgement> {
-    this.assertCurrent(generation);
+  private async judge(spec: QuerySpec, candidate: Candidate, context: string, generation: number, stats: QueryStats, signal: AbortSignal): Promise<Judgement> {
+    this.assertCurrent(generation, signal);
     const passage = modelText(candidate);
     const key = this.scoreKey(spec, candidate, context);
     const cached = this.cache.get(key);
@@ -271,31 +293,32 @@ export class QueryEngine {
       return { ...cached, candidate };
     }
     const existing = this.inFlight.get(key);
-    if (existing?.generation === generation) { stats.shared++; return { ...(await existing.promise), candidate }; }
-    const request = (async () => {
-      const release = await this.gate.acquire(generation, () => !this.disposed && generation === this.generation);
+    if (existing) { stats.shared++; return { ...(await existing.join(signal)), candidate }; }
+    const request = new SharedWork<Judgement>(async sharedSignal => {
+      const prune = () => this.gate.cancelStale(this.generation);
+      sharedSignal.addEventListener("abort", prune, { once: true });
+      let release: (() => void) | undefined;
       try {
-        this.assertCurrent(generation);
+        release = await this.gate.acquire(generation, () => !this.disposed && generation === this.generation && !sharedSignal.aborted);
+        this.assertCurrent(generation, sharedSignal);
         stats.requested++;
-        const response = await this.client!.rank(spec.question, passage, spec.criteria, context, () => this.gate.throttle(), () => { stats.retries++; });
+        const response = await this.client!.rank(spec.question, passage, spec.criteria, context, () => this.gate.throttle(), () => { stats.retries++; }, sharedSignal);
         this.gate.success();
         release();
-        this.assertCurrent(generation);
+        this.assertCurrent(generation, sharedSignal);
         const judgement = this.validateResponse(response, spec, candidate);
         this.cache.set(key, judgement);
         if (this.persistentCache) {
           const { candidate: _candidate, ...score } = judgement;
           await this.persistentCache.set(key, score);
-          this.assertCurrent(generation);
+          this.assertCurrent(generation, sharedSignal);
         }
         while (this.cache.size > MAX_CACHE_ENTRIES) this.cache.delete(this.cache.keys().next().value!);
         return judgement;
-      } finally { release(); }
-    })();
-    const entry = { generation, promise: request };
-    this.inFlight.set(key, entry);
-    try { return { ...(await request), candidate }; }
-    finally { if (this.inFlight.get(key) === entry) this.inFlight.delete(key); }
+      } finally { release?.(); sharedSignal.removeEventListener("abort", prune); }
+    }, () => { if (this.inFlight.get(key) === request) this.inFlight.delete(key); });
+    this.inFlight.set(key, request);
+    return { ...(await request.join(signal)), candidate };
   }
 
   private validateResponse(response: unknown, spec: QuerySpec, candidate: Candidate): Judgement {
@@ -321,7 +344,8 @@ export class QueryEngine {
     return { candidate, score: resultScore, contribution, scores };
   }
 
-  private assertCurrent(generation: number): void {
+  private assertCurrent(generation: number, signal?: AbortSignal): void {
+    checkSignal(signal);
     if (this.disposed || generation !== this.generation) throw new QueryRunSuperseded();
   }
 }

@@ -1,14 +1,16 @@
+import { checkSignal } from "./work";
 import { requestUrl } from "obsidian";
 import type { JevResponse, QueryCriteria } from "./types";
 
-export interface JevTransport { post(url: string, headers: Record<string, string>, body: unknown): Promise<{ status: number; json: unknown }> }
+export interface JevTransport { post(url: string, headers: Record<string, string>, body: unknown, signal?: AbortSignal): Promise<{ status: number; json: unknown }> }
 const defaultTransport: JevTransport = { post: async (url, headers, body) => { const response = await requestUrl({ url, method: "POST", headers, body: JSON.stringify(body), throw: false }); return { status: response.status, json: response.json }; } };
 
 const ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 export class JevClient {
   constructor(private readonly apiKey: string, private readonly model: string, private readonly transport: JevTransport = defaultTransport, private readonly sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms))) {}
 
-  async rank(question: string, candidate: string, criteria: QueryCriteria, context = "", onThrottle?: () => void, onRetry?: () => void): Promise<JevResponse> {
+  async rank(question: string, candidate: string, criteria: QueryCriteria, context = "", onThrottle?: () => void, onRetry?: () => void, signal?: AbortSignal): Promise<JevResponse> {
+    checkSignal(signal);
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (this.apiKey.trim()) headers.Authorization = `Bearer ${this.apiKey}`;
     else throw new Error("TypeSafe API key is not configured.");
@@ -24,7 +26,9 @@ export class JevClient {
     const body = { model: this.model, state: { question, candidate_passage: candidate, context_notes: context }, questions };
     let attempt = 0;
     while (true) {
-      const response = await this.transport.post(ENDPOINT, headers, body);
+      checkSignal(signal);
+      const response = await this.transport.post(ENDPOINT, headers, body, signal);
+      checkSignal(signal);
       if (response.status >= 200 && response.status < 300) return response.json as JevResponse;
       if (response.status === 429 || response.status === 529) onThrottle?.();
       if ((response.status === 429 || response.status === 529) && attempt < 3) { onRetry?.(); await this.sleep(250 * 2 ** attempt); attempt++; continue; }

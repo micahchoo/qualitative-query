@@ -17,7 +17,7 @@ describe("query engine", () => {
     const result = await engine.run(spec, 10, 10, 0.4, progress);
     expect(progress.mock.calls).toEqual([[0, 2], [1, 2], [2, 2]]);
     expect(result.status).toBe("ready");
-    expect(rank).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.anything(), expect.stringContaining("design disagreement"), expect.any(Function), expect.any(Function));
+    expect(rank).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.anything(), expect.stringContaining("design disagreement"), expect.any(Function), expect.any(Function), expect.any(AbortSignal));
     expect(rank).toHaveBeenCalledTimes(2);
   });
 
@@ -277,4 +277,26 @@ it("counts shared requests separately and exposes all-rejected results", async (
  const result = await engine.run({ ...spec, contextPaths: [], criteria: { mode: "generic" } }, 10, 6, 0.5);
  expect(result.stats).toMatchObject({ checked: 2, requested: 1, shared: 1, passed: 0 });
  expect(result.status).toBe("empty"); expect(result.belowThreshold).toHaveLength(2);
+});
+
+it("deduplicates ordered context ranges with linear position work", async () => {
+  let reads = 0;
+  const context = Array.from({ length: 10_000 }, (_, i) => ({ ...block(String(i), "context.md", "x"), get lineStart() { reads++; return i * 2 + 1; }, lineEnd: i * 2 + 1 }));
+  const engine = new QueryEngine(null, () => [], () => context);
+  await engine.run({ ...spec, contextPaths: ["context.md"] }, 10, 10, 0.5);
+  expect(reads).toBeLessThan(10_000 * 10);
+});
+
+it("keeps the original context overlap/span/tie behavior across disjoint ranges", async () => {
+  const context = [
+    { ...block("a", "context.md", "short"), lineStart: 1, lineEnd: 2 },
+    { ...block("b", "context.md", "parent"), lineStart: 1, lineEnd: 5 },
+    { ...block("c", "context.md", "child"), lineStart: 3, lineEnd: 4 },
+    { ...block("d", "context.md", "next"), lineStart: 8, lineEnd: 9 },
+    { ...block("e", "context.md", "equal-range duplicate"), lineStart: 8, lineEnd: 9 },
+  ];
+  const rank = vi.fn().mockResolvedValue({ answers: { relevant: { noul: 0.9 } } });
+  const engine = new QueryEngine({ rank }, () => [block("source", "source.md", "conflict")], () => context);
+  await engine.run({ ...spec, criteria: { mode: "generic" }, contextPaths: ["context.md"] }, 10, 10, 0.5);
+  expect(rank.mock.calls[0][3]).toBe("parent\n\nnext");
 });
