@@ -37,6 +37,7 @@ it("stops rendering further passages when unloaded during a Markdown render", as
   let finish!: () => void;
   vi.mocked(MarkdownRenderer.render).mockReset().mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
   vi.stubGlobal("createEl", () => new ElementAdapter());
+  vi.stubGlobal("createDiv", () => new ElementAdapter());
   const owner = new Component(); const container = new ElementAdapter();
   try {
     const rendering = renderResult({} as App, container as unknown as HTMLElement, result, spec, owner, candidate => candidate);
@@ -52,6 +53,7 @@ it("ignores an older expansion failure after a newer render succeeds", async () 
     .mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { rejectOlder = reject; }))
     .mockResolvedValueOnce(undefined);
   vi.stubGlobal("createEl", () => new ElementAdapter());
+  vi.stubGlobal("createDiv", () => new ElementAdapter());
   const owner = new Component(); const container = new ElementAdapter();
   try {
     await renderResult({} as App, container as unknown as HTMLElement, { ...result, judgements: result.judgements.slice(0, 1) }, spec, owner, candidate => candidate);
@@ -66,6 +68,7 @@ it("ignores an older expansion failure after a newer render succeeds", async () 
 it("offers inclusion for rejected passages and undo for manual selections", async () => {
   vi.mocked(MarkdownRenderer.render).mockReset().mockResolvedValue(undefined);
   vi.stubGlobal("createEl", () => new ElementAdapter());
+  vi.stubGlobal("createDiv", () => new ElementAdapter());
   const owner = new Component(), container = new ElementAdapter();
   const include = vi.fn().mockResolvedValue(undefined);
   const find = (element: ElementAdapter, text: string): ElementAdapter | undefined => element.text === text ? element : element.children.map(child => find(child, text)).find(Boolean);

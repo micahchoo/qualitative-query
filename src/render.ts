@@ -95,7 +95,7 @@ export async function renderResult(
       const child = new Component();
       markdownChild = child;
       component.addChild(child);
-      const stage = createEl("div");
+      const stage = createDiv();
       stage.addClass("qq-source-content");
       try {
         await MarkdownRenderer.render(app, inertQueryBlocks(block.renderText ?? block.text), stage, block.path, child);

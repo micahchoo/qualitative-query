@@ -87,7 +87,7 @@ Requires **Obsidian 1.11.4 or newer**. Community-directory submission is pending
 
 For manual installation, download `main.js`, `manifest.json`, and `styles.css` from a [release](https://github.com/micahchoo/qualitative-query/releases).
 Place them in `<vault-config>/plugins/qualitative-query/`, then reload Obsidian and enable the plugin.
-The configuration folder is usually `.obsidian`. The optional release ZIP includes the embedding model for offline setup.
+The configuration folder is usually `.obsidian`. For offline setup, a local `npm run release:package` build includes the embedding model in its ZIP. Published releases contain the three plugin install files.
 
 Desktop testing covers the main question and passage-saving flows. Mobile testing remains outstanding.
 

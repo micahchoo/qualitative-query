@@ -30,13 +30,10 @@ jobs:
             release/main.js
             release/manifest.json
             release/styles.css
-            release/*.zip
-            release/INSTALLATION.json
-            release/SHA256SUMS
       - name: Publish verified assets
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" \
-            --notes-file docs/RELEASE-NOTES.md release/*
+            --notes-file docs/RELEASE-NOTES.md release/main.js release/manifest.json release/styles.css

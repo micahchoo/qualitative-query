@@ -11,7 +11,7 @@ The worker code and licence notices are included in `main.js`.
 Embedding weights are optional data, downloaded explicitly through settings with pinned hashes.
 The plugin does not download executable dependencies or update itself.
 
-The release also provides an offline ZIP, `INSTALLATION.json`, and `SHA256SUMS`.
+Local packaging also produces an offline ZIP, `INSTALLATION.json`, and `SHA256SUMS`. These extra files are not uploaded to GitHub releases.
 The ZIP contains all distribution files, including model assets and separate licence notices.
 
 [Obsidian submission instructions](https://docs.obsidian.md/plugins/releasing/submit-plugin) describe the current installer and directory process.
@@ -118,7 +118,7 @@ The current docs state that community-directory submission is pending.
 
 `.github/workflows/release.yml` runs on version tags.
 It installs locked dependencies, downloads pinned data, runs the gates, and checks the tag against the manifest.
-It attests the standard assets, offline ZIP, installation inventory, and checksums.
+It attests and publishes only `main.js`, `manifest.json`, and `styles.css`.
 Only then does it publish the release.
 
 ```sh
@@ -126,7 +126,8 @@ gh run watch --repo micahchoo/qualitative-query
 gh release view 0.3.8 --repo micahchoo/qualitative-query
 gh release download 0.3.8 --repo micahchoo/qualitative-query --dir /tmp/qualitative-query-release
 cd /tmp/qualitative-query-release
-sha256sum -c SHA256SUMS
+sha256sum main.js manifest.json styles.css
+# Compare these hashes with the verified local build.
 gh attestation verify main.js --repo micahchoo/qualitative-query
 ```
 
