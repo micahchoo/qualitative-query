@@ -12,6 +12,7 @@ export class VaultIndex {
   private blocksDirty = true;
   private pathVersions = new Map<string, number>();
   private scanToken = 0;
+  private stopped = false;
   private scanInFlight?: Promise<void>;
 
   constructor(private readonly vault: Vault, private readonly excluded: () => string[] = () => []) {}
@@ -30,6 +31,7 @@ export class VaultIndex {
   }
 
   async indexFile(file: TFile): Promise<void> {
+    if (this.stopped) return;
     const path = file.path;
     const version = this.bumpPathVersion(path);
     if (this.isExcluded(path)) {
@@ -39,15 +41,16 @@ export class VaultIndex {
     }
     const mtime = file.stat.mtime;
     const source = await this.vault.cachedRead(file);
-    if (version !== this.pathVersions.get(path) || this.isExcluded(path) || !this.fileIsCurrent(file, path, mtime)) return;
+    if (this.stopped || version !== this.pathVersions.get(path) || this.isExcluded(path) || !this.fileIsCurrent(file, path, mtime)) return;
     const blocks = parseMarkdown(path, source);
     prepareSearchBlocks(blocks);
-    if (version !== this.pathVersions.get(path) || this.isExcluded(path) || !this.fileIsCurrent(file, path, mtime)) return;
+    if (this.stopped || version !== this.pathVersions.get(path) || this.isExcluded(path) || !this.fileIsCurrent(file, path, mtime)) return;
     this.files.set(path, { path, mtime, blocks });
     this.blocksDirty = true;
   }
 
   remove(path: string): void {
+    if (this.stopped) return;
     this.bumpPathVersion(path);
     if (this.files.delete(path)) this.blocksDirty = true;
   }
@@ -55,12 +58,22 @@ export class VaultIndex {
   refreshExclusions(): void { this.removeExcludedFiles(); }
 
   initialScan(onProgress?: Progress): Promise<void> {
+    if (this.stopped) return Promise.resolve();
     const token = ++this.scanToken;
     const work = this.scan(token, onProgress);
-    this.scanInFlight = work.finally(() => {
-      if (this.scanInFlight === work || token === this.scanToken) this.scanInFlight = undefined;
+    const completion = work.finally(() => {
+      if (this.scanInFlight === completion) this.scanInFlight = undefined;
     });
-    return this.scanInFlight;
+    this.scanInFlight = completion;
+    return completion;
+  }
+
+  /** Pending storage reads may settle, but cannot add data or start another read. */
+  dispose(): void {
+    this.stopped = true;
+    this.scanToken++;
+    this.files.clear(); this.pathVersions.clear();
+    this.flatBlocks = []; this.blocksDirty = false;
   }
 
   private async scan(token: number, onProgress?: Progress): Promise<void> {

@@ -1,10 +1,11 @@
 {
   "id": "qualitative-query",
   "name": "Qualitative Query",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "minAppVersion": "1.11.4",
   "description": "Ask your vault a question. Connect the passages that answer it.",
   "author": "Micah",
   "isDesktopOnly": false,
-  "authorUrl": "https://github.com/micahchoo"
+  "authorUrl": "https://github.com/micahchoo",
+  "fundingUrl": "https://github.com/sponsors/micahchoo"
 }

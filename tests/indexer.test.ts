@@ -68,3 +68,23 @@ describe("vault index", () => {
     expect(index.blocks).toHaveLength(2);
   });
 });
+
+it("stops a scan and ignores its pending read after disposal", async () => {
+  const pending = deferred<string>();
+  let reads = 0;
+  const notes = [file("a.md", 1), file("b.md", 1)];
+  const index = new VaultIndex(vaultFor(notes, () => { reads++; return pending.promise; }));
+  const scan = index.initialScan();
+  index.dispose(); pending.resolve("Late passage"); await scan; await index.whenReady();
+  await index.initialScan(); await index.indexFile(notes[1] as any);
+  expect(reads).toBe(1); expect(index.blocks).toEqual([]); expect(index.ready).toBe(true);
+});
+it("clears indexed passages and rejects stale individual commits on disposal", async () => {
+  const pending = deferred<string>();
+  const notes = [file("a.md", 1), file("b.md", 1)];
+  const index = new VaultIndex(vaultFor(notes, note => note.path === "a.md" ? "Existing" : pending.promise));
+  await index.indexFile(notes[0] as any);
+  const indexing = index.indexFile(notes[1] as any);
+  index.dispose(); pending.resolve("Late"); await indexing;
+  expect(index.blocks).toEqual([]); expect(index.blocksForPath("a.md")).toEqual([]);
+});

@@ -11,7 +11,8 @@ function scalar(value: string): string | number | boolean | string[] {
 }
 function frontmatter(text: string): Record<string, string | number | boolean | string[]> {
   if (!text.startsWith("---\n")) return {};
-  const end = text.indexOf("\n---", 4); if (end < 0) throw new Error("Invalid query frontmatter: closing delimiter is missing.");
+  const closing = /^---[ \t]*$/m.exec(text.slice(4));
+  const end = closing ? 4 + closing.index : -1; if (end < 0) throw new Error("Invalid query frontmatter: closing delimiter is missing.");
   try {
     const parsed: unknown = parseYaml(text.slice(4, end));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Frontmatter must be a YAML object.");
@@ -26,6 +27,8 @@ function links(value: unknown): string[] {
 }
 
 export function parseQuery(path: string, text: string, folder: string, blockSource?: string): QuerySpec {
+  text = text.replace(/\r\n?/g, "\n");
+  blockSource = blockSource?.replace(/\r\n?/g, "\n");
   const fm = frontmatter(text);
   const code = blockSource ?? text.match(/```(?:qualitative-query|qq)\s*\n([\s\S]*?)```/i)?.[1] ?? "";
   const fields: Record<string, string | number | boolean | string[]> = { ...fm };

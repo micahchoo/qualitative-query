@@ -13,3 +13,14 @@ describe("query note authoring", () => {
     expect(parseQuery("Queries/Anything.md", "", "Queries", "What defines conflict?").question).toBe("What defines conflict?");
   });
 });
+
+it("parses the same authored question and context with LF and CRLF", () => {
+  const text = "---\nquestion: Authored question\ncontext: [[Project]]\ninstructions: Select concrete experiences\n---\nBody\n\n---\nOther body";
+  const lf = parseQuery("Queries/Title.md", text, "Queries");
+  const crlf = parseQuery("Queries/Title.md", text.replace(/\n/g, "\r\n"), "Queries");
+  expect(crlf).toEqual(lf); expect(crlf.question).toBe("Authored question");
+  expect(crlf.contextPaths).toEqual(["Project"]); expect(crlf.criteria.instructions).toBe("Select concrete experiences");
+});
+it("requires a complete frontmatter closing delimiter", () => {
+  expect(() => parseQuery("Queries/Title.md", "---\nquestion: Test\n---suffix", "Queries")).toThrow("closing delimiter");
+});

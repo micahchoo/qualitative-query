@@ -330,6 +330,7 @@ export default class QualitativeQueryPlugin extends Plugin {
     this.fileTimers.clear();
     this.engine?.dispose();
     this.retrieval?.dispose();
+    this.index?.dispose();
     void this.scoreCache?.close();
     for (const view of [...this.views]) view.unload();
     this.autoViews.clear();
