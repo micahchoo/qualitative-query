@@ -46,3 +46,18 @@ it("does not revive search when disposed during restoration", async () => {
   await expect(retrieval.restore()).rejects.toThrow("closed");
   expect(create).not.toHaveBeenCalled();
 });
+
+it("reports truncation only when another matching passage exists", async () => {
+ const corpus = ["a", "b", "c"].map(name => parseMarkdown(`${name}.md`, "Conflict mediation helps.")[0]);
+ const retrieval = new LocalRetrieval(() => ({ status: "failed", dispose() {}, search: async () => { throw new Error("failed"); } }), async () => {});
+ expect((await retrieval.search("conflict", corpus, 2)).truncated).toBe(true);
+ expect((await retrieval.search("conflict", corpus.slice(0, 2), 2)).truncated).toBe(false);
+});
+it("restarts from existing assets without downloading", async () => {
+ const dispose = vi.fn(); const download = vi.fn();
+ const create = vi.fn(() => ({ status: "ready", dispose, search: async () => [] }));
+ const retrieval = new LocalRetrieval(create, download);
+ await retrieval.search("conflict", blocks, 2); retrieval.restart();
+ await retrieval.search("conflict", blocks, 2);
+ expect(download).not.toHaveBeenCalled(); expect(create).toHaveBeenCalledTimes(2); expect(dispose).toHaveBeenCalledTimes(1);
+});

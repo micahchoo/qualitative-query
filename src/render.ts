@@ -1,5 +1,5 @@
 import { Component, MarkdownRenderer, TFile, type App } from "obsidian";
-import type { Block, Candidate, QueryResult, QuerySpec } from "./types";
+import type { Block, Candidate, Judgement, QueryResult, QuerySpec } from "./types";
 
 type Expansion = (candidate: Candidate, adjacent: number) => Block;
 
@@ -15,11 +15,41 @@ export async function renderResult(
   spec: QuerySpec,
   component: Component,
   expand?: Expansion,
+  onInclude?: (judgement: Judgement, include: boolean) => Promise<void>,
+  belowThreshold = false,
 ): Promise<void> {
   let active = true;
   component.register(() => { active = false; });
   container.empty();
   container.addClass("qq-view");
+  if (result.stats) {
+    const s = result.stats;
+    container.createDiv({ cls: "qq-status", text: `Shortlisted ${s.shortlisted} passages from ${s.searchable} searchable blocks · ${s.overlapRemoved} overlaps removed${s.truncated ? ` · Window limit ${s.windowLimit} reached; more matches were available` : ""}.` });
+    container.createDiv({ cls: "qq-status", text: result.selection === "local"
+      ? "Local matches · Jev minimum score does not apply."
+      : `${s.checked} checked · ${s.cached} cached · ${s.shared} shared · ${s.requested} new requests · ${s.retries} retries · ${s.skipped} skipped · ${s.passed} meet minimum score ${s.threshold}.` });
+    if (s.contextChars) container.createDiv({ cls: "qq-status", text: `Explicit context: ${s.contextChars.toLocaleString()} / 48,000 characters.` });
+  }
+  if (result.belowThreshold?.length) {
+    const below = result.belowThreshold;
+    const details = container.createEl("details");
+    details.createEl("summary", { text: `${below.length} passages below minimum score` });
+    details.createEl("p", { text: "Highest scores first. These passages are not included when you save the selection." });
+    const list = details.createDiv();
+    const more = details.createEl("button", { text: "Show next 25" });
+    let offset = 0, busy = false;
+    const page = async () => {
+      if (busy || !active || offset >= below.length) return;
+      busy = true; more.disabled = true;
+      const stage = list.createDiv();
+      const chunk = below.slice(offset, offset + 25);
+      await renderResult(app, stage, { status: "ready", selection: "jev", candidates: [], judgements: chunk }, { ...spec, adjacent: 0 }, component, expand, onInclude, true);
+      if (!active) return;
+      offset += chunk.length; busy = false; more.disabled = false; more.hidden = offset >= below.length;
+    };
+    component.registerDomEvent(details, "toggle", () => { if (details.open && offset === 0) void page(); });
+    component.registerDomEvent(more, "click", () => { void page(); });
+  }
   if (result.warning) container.createDiv({ cls: "qq-warning", text: result.warning });
   if (result.status !== "ready") {
     container.createDiv({ cls: result.status === "error" ? "qq-error" : "qq-status", text: result.error ?? "No matching passages found. Try a broader question." });
@@ -45,6 +75,16 @@ export async function renderResult(
     meta.createSpan({ cls: "qq-breadcrumb", text: original.headingPath.join(" › ") });
     if (result.selection !== "local" && spec.criteria.mode === "default") meta.createSpan({ text: judgement.contribution });
     meta.createSpan({ cls: "qq-score", text: result.selection === "local" ? "Local match" : `Jev score ${judgement.score.toFixed(2)}` });
+    if (judgement.manuallyIncluded) meta.createSpan({ text: "Manually included" });
+    if (onInclude && (belowThreshold || judgement.manuallyIncluded)) {
+      const control = item.createEl("button", { text: judgement.manuallyIncluded ? "Undo inclusion" : "Include passage" });
+      component.registerDomEvent(control, "click", async () => {
+        if (!active || control.disabled) return;
+        control.disabled = true;
+        try { await onInclude(judgement, !judgement.manuallyIncluded); }
+        catch (error) { if (active) { item.createDiv({ cls: "qq-error", text: error instanceof Error ? error.message : String(error) }); control.disabled = false; } }
+      });
+    }
     const content = item.createDiv({ cls: "qq-source-content" });
     let markdownChild: Component | undefined;
     let serial = 0;

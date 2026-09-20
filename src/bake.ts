@@ -1,3 +1,4 @@
+import { IndexWaitTimeout, waitForBlockIds, type IndexWaitOptions } from "./index-wait";
 import { createUniqueNote } from "./notes";
 import { TFile, type App } from "obsidian";
 import type { Block, QueryResult, QuerySpec } from "./types";
@@ -14,7 +15,8 @@ export function planBlockIds(source: string, blocks: Block[], makeId = () => `qq
   for (const block of blocks) {
     if (ids.has(block.id)) continue;
     if (block.kind === "heading" || block.kind === "yaml") throw new Error("Headings and frontmatter cannot be saved as passage embeds. Use passage results instead.");
-    if (ranges.some(b=>b.lineStart<=block.lineEnd && block.lineStart<=b.lineEnd)) throw new Error("These passages overlap. Refresh the question before saving.");
+    const overlap = ranges.find(b=>b.lineStart<=block.lineEnd && block.lineStart<=b.lineEnd);
+    if (overlap) throw new Error(`Overlapping passages in ${block.path}: lines ${overlap.lineStart}–${overlap.lineEnd} and ${block.lineStart}–${block.lineEnd}. Refresh the question or adjust the selection before saving.`);
     ranges.push(block);
     const start = block.lineStart - 1, end = block.lineEnd - 1;
     if (start < 0 || end >= lines.length || lines.slice(start,end+1).join("\n") !== block.text.replace(/\r\n/g,"\n")) {
@@ -43,7 +45,11 @@ export function planBlockIds(source: string, blocks: Block[], makeId = () => `qq
   return {text:lines.join(eol),ids};
 }
 
-export async function bakeNote(app: App, result: QueryResult, spec: QuerySpec, queryPath: string): Promise<TFile> {
+export class PendingSave extends Error {
+  constructor(readonly retry: () => Promise<TFile>) { super("Obsidian is still indexing source links. Select Retry save to wait again."); }
+}
+
+export async function bakeNote(app: App, result: QueryResult, spec: QuerySpec, queryPath: string, options: IndexWaitOptions = {}): Promise<TFile> {
   if (!result.judgements.length) throw new Error("No passages to save. Open a question and wait for results.");
   const grouped = new Map<string, Block[]>();
   for (const {candidate} of result.judgements) grouped.set(candidate.path,[...(grouped.get(candidate.path) ?? []),candidate]);
@@ -60,16 +66,9 @@ export async function bakeNote(app: App, result: QueryResult, spec: QuerySpec, q
     if (current !== plan.before) throw new Error(`Source changed: ${plan.file.path}. Refresh before saving passages. Any IDs already added are safe to keep.`);
     return plan.after;
   });
-  // Source writes finish before Obsidian's asynchronous Markdown indexing.
-  // Do not create/open embeds until the native metadata cache can resolve them.
-  const deadline = Date.now() + 15_000;
-  while (plans.some(plan => {
-    const blocks = app.metadataCache.getFileCache(plan.file)?.blocks;
-    return [...plan.ids.values()].some(id => !blocks?.[id]);
-  })) {
-    if (Date.now() >= deadline) throw new Error("Obsidian is still indexing the source block IDs. Wait a moment, refresh the question, and select Save passages again. No selection note was created.");
-    await new Promise(resolve => window.setTimeout(resolve, 50));
-  }
+  const finish = async (): Promise<TFile> => {
+    try { await waitForBlockIds(app, plans.map(plan => ({ file: plan.file, ids: [...plan.ids.values()] })), options); }
+    catch (error) { if (error instanceof IndexWaitTimeout) throw new PendingSave(finish); throw error; }
   const outputPath = `${BAKED_FOLDER}/note.md`;
   const embeds = result.judgements.map(({candidate}) => {
     const plan = plans.find(p=>p.file.path===candidate.path)!;
@@ -79,4 +78,6 @@ export async function bakeNote(app: App, result: QueryResult, spec: QuerySpec, q
   const origin = query instanceof TFile ? `[Saved question](${query.path.split("/").map(encodeURIComponent).join("/")})` : queryPath;
   const text = `# ${spec.question.replace(/\r?\n/g," ")}\n\nFrom ${origin} · ${new Date().toISOString()}\n\nThese passages stay in this order. Their text updates when the source notes change.\n\n${embeds.join("\n\n")}\n`;
   return createUniqueNote(app,BAKED_FOLDER,spec.question,text);
+  };
+  return finish();
 }

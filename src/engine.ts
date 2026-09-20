@@ -3,7 +3,7 @@ import type { ScoreCache } from "./score-cache";
 import { MAX_CANDIDATES } from "./limits";
 import { shortlist } from "./search";
 import { JevClient } from "./jev";
-import type { Block, Candidate, Contribution, Judgement, QueryResult, QuerySpec } from "./types";
+import type { Block, Candidate, Contribution, Judgement, QueryResult, QuerySpec, QueryStats } from "./types";
 
 const MAX_PASSAGE_CHARS = 24_000;
 const MAX_CONTEXT_CHARS = 48_000;
@@ -130,7 +130,7 @@ export class QueryEngine {
     /** Include provider/model identity when an engine is reused across clients. */
     private readonly cacheNamespace = "",
     private readonly persistentCache?: Pick<ScoreCache, "get" | "set"> & Partial<Pick<ScoreCache, "getMany">>,
-    private readonly retrieve: (question: string, blocks: Block[], limit: number) => RetrievalResult | Promise<RetrievalResult> = (question, blocks, limit) => ({ candidates: shortlist(question, blocks, limit) }),
+    private readonly retrieve: (question: string, blocks: Block[], limit: number) => RetrievalResult | Promise<RetrievalResult> = (question, blocks, limit) => ({ candidates: shortlist(question, blocks, limit), truncated: shortlist(question, blocks, limit + 1).length > limit }),
   ) {}
 
   clearCache(): void { this.cache.clear(); }
@@ -149,22 +149,30 @@ export class QueryEngine {
     let context: string;
     try { context = await this.readContext(spec.contextPaths); }
     catch (error) { return { status: "error", candidates: [], judgements: [], error: error instanceof Error ? error.message : String(error) }; }
-    if (context.length > MAX_CONTEXT_CHARS) return { status: "error", candidates: [], judgements: [], error: "The selected context is too large for one evaluation. Remove some context notes or split the query." };
+    if (context.length > MAX_CONTEXT_CHARS) return { status: "error", candidates: [], judgements: [], error: `Selected context is ${context.length.toLocaleString()} characters; the limit is ${MAX_CONTEXT_CHARS.toLocaleString()}. Choose specific blocks or sections, or remove context notes.` };
     const retrieval = await this.retrieve(spec.question, corpus, Math.min(MAX_CANDIDATES, Math.max(1, candidateLimit)));
     const candidates = dedupeCandidates(retrieval.candidates);
+    const stats: QueryStats = { searchable: corpus.length, shortlisted: retrieval.candidates.length,
+      overlapRemoved: retrieval.candidates.length - candidates.length, windowLimit: Math.min(MAX_CANDIDATES, Math.max(1, candidateLimit)),
+      truncated: retrieval.truncated ?? false, checked: 0, cached: 0, shared: 0, requested: 0, retries: 0,
+      skipped: 0, passed: 0, contextChars: context.length, threshold };
     const warning = (message?: string) => [retrieval.warning, message].filter(Boolean).join(" ") || undefined;
     this.assertCurrent(generation);
-    if (!candidates.length) return { status: "empty", candidates, judgements: [], warning: warning() };
+    if (!candidates.length) return { status: "empty", candidates, judgements: [], stats, selection: this.client ? "jev" : "local", warning: warning() };
     if (!this.client) {
       const ranked = [...candidates].sort((a, b) => (b.retrievalScore ?? b.lexicalScore) - (a.retrievalScore ?? a.lexicalScore) || a.id.localeCompare(b.id));
-      return { status: "ready", selection: "local", candidates,
+      return { status: "ready", selection: "local", candidates, stats,
         warning: warning("Local matches. Add a Jev API key in settings to select and order passages by how well they answer your question."),
         judgements: ranked.slice(0, spec.limit ?? limit).map(candidate => ({ candidate, score: candidate.retrievalScore ?? candidate.lexicalScore, contribution: "other", scores: {} })),
       };
     }
 
     const judgements: Judgement[] = [];
+    const belowThreshold: Judgement[] = [];
+    const accept = (value: Judgement) => { stats.checked++; if (value.score >= threshold) { judgements.push(value); stats.passed++; } else belowThreshold.push(value); };
+    const rejected = () => [...belowThreshold].sort((a, b) => b.score - a.score || a.candidate.id.localeCompare(b.candidate.id));
     const skipped = candidates.filter((candidate) => displayText(candidate).length > MAX_PASSAGE_CHARS);
+    stats.skipped = skipped.length;
     const judgeable = candidates.filter((candidate) => displayText(candidate).length <= MAX_PASSAGE_CHARS);
     const order: Record<Contribution, number> = { definition: 0, condition: 1, distinction: 2, other: 3 };
     const selection = () => [...judgements].sort((a, b) => spec.criteria.mode === "default"
@@ -192,23 +200,23 @@ export class QueryEngine {
     const publish = () => {
       if (Date.now() - lastPartial >= 250 || completed === judgeable.length) {
         lastPartial = Date.now();
-        onPartial?.({ status: "ready", selection: "jev", candidates, judgements: selection(), warning: warning("Still checking passages. Results may change.") });
+        onPartial?.({ status: "ready", selection: "jev", candidates, judgements: selection(), belowThreshold: rejected(), stats: { ...stats }, warning: warning("Still checking passages. Results may change.") });
       }
     };
     const pending = judgeable.filter(candidate => {
       const key = this.scoreKey(spec, candidate, context);
       const value = this.cache.get(key) ?? persisted.get(key);
       if (!value) return true;
-      if (value.score >= threshold) judgements.push({ ...value, candidate });
+      stats.cached++; accept({ ...value, candidate });
       completed++; return false;
     });
     if (completed) { onProgress?.(completed, judgeable.length); publish(); }
     await Promise.all(pending.map(async (candidate) => {
       try {
-        const value = await this.judge(spec, candidate, context, generation);
-        if (value.score >= threshold) judgements.push(value);
+        const value = await this.judge(spec, candidate, context, generation, stats);
+        accept(value);
       } catch (error) {
-        if (error && typeof error === "object" && "code" in error && error.code === "INPUT_TOO_LARGE") skipped.push(candidate);
+        if (error && typeof error === "object" && "code" in error && error.code === "INPUT_TOO_LARGE") { skipped.push(candidate); stats.skipped++; }
         else throw error;
       }
       this.assertCurrent(generation);
@@ -217,12 +225,12 @@ export class QueryEngine {
     }));
     this.assertCurrent(generation);
     if (!judgements.length) {
-      const result: WarningResult = { status: "empty", candidates, judgements: [], error: skipped.length ? "No checked passages met the minimum score. Broaden the question or lower its threshold." : "No passages met the minimum score. Broaden the question or lower its threshold." };
+      const result: WarningResult = { status: "empty", candidates, selection: "jev", judgements: [], belowThreshold: rejected(), stats: { ...stats }, error: skipped.length ? "No checked passages met the minimum score. Broaden the question or lower its threshold." : "No passages met the minimum score. Broaden the question or lower its threshold." };
       if (skipped.length) result.warning = `${skipped.length} passage${skipped.length === 1 ? " was" : "s were"} skipped because they exceed the model input limit.`;
       result.warning = warning(result.warning);
       return result;
     }
-    const result: WarningResult = { status: "ready", selection: "jev", candidates, judgements: selection() };
+    const result: WarningResult = { status: "ready", selection: "jev", candidates, judgements: selection(), belowThreshold: rejected(), stats: { ...stats } };
     if (skipped.length) result.warning = `${skipped.length} passage${skipped.length === 1 ? " was" : "s were"} skipped because they exceed the model input limit.`;
     result.warning = warning(result.warning);
     return result;
@@ -231,7 +239,7 @@ export class QueryEngine {
   private async readContext(paths: string[]): Promise<string> {
     const blocks: Block[] = [];
     for (const path of paths) {
-      const pathBlocks = (await this.getSourceBlocks(path)).filter((block) => block.path === path);
+      const pathBlocks = (await this.getSourceBlocks(path)).filter((block) => block.path === path.split("#")[0]);
       blocks.push(...dedupeRanges(pathBlocks));
     }
     return blocks.map(modelText).join("\n\n");
@@ -252,22 +260,24 @@ export class QueryEngine {
     return values;
   }
 
-  private async judge(spec: QuerySpec, candidate: Candidate, context: string, generation: number): Promise<Judgement> {
+  private async judge(spec: QuerySpec, candidate: Candidate, context: string, generation: number, stats: QueryStats): Promise<Judgement> {
     this.assertCurrent(generation);
     const passage = modelText(candidate);
     const key = this.scoreKey(spec, candidate, context);
     const cached = this.cache.get(key);
     if (cached) {
+      stats.cached++;
       this.cache.delete(key); this.cache.set(key, cached);
       return { ...cached, candidate };
     }
     const existing = this.inFlight.get(key);
-    if (existing?.generation === generation) return { ...(await existing.promise), candidate };
+    if (existing?.generation === generation) { stats.shared++; return { ...(await existing.promise), candidate }; }
     const request = (async () => {
       const release = await this.gate.acquire(generation, () => !this.disposed && generation === this.generation);
       try {
         this.assertCurrent(generation);
-        const response = await this.client!.rank(spec.question, passage, spec.criteria, context, () => this.gate.throttle());
+        stats.requested++;
+        const response = await this.client!.rank(spec.question, passage, spec.criteria, context, () => this.gate.throttle(), () => { stats.retries++; });
         this.gate.success();
         release();
         this.assertCurrent(generation);

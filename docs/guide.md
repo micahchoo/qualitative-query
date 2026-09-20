@@ -28,6 +28,7 @@ The retrieval window comes from plugin settings, initially 1,000 candidates.
 
 A saved query contains a `qualitative-query` code block.
 You can edit the fields directly or put a query block in another note.
+Plain query blocks preserve multiline questions. Structured blocks require a supported field on every nonblank line; malformed fields produce an error.
 For an automatic query in the query folder, the filename supplies the question when no explicit question exists.
 
 | Field | Meaning |
@@ -41,7 +42,7 @@ For an automatic query in the query folder, the filename supplies the question w
 | `limit` | Number of results to display |
 | `threshold` | Minimum Jev score from zero to one |
 | `adjacent` | Number of neighbouring structural units to include, from zero to five |
-| `context` | Explicit context-note links |
+| `context` | Explicit note, heading, or block links |
 
 With no explicit mode or authored rubric, questions such as “What defines conflict?” use definition ordering.
 Builder presets explicitly use generic mode, including the Definitions preset.
@@ -50,12 +51,15 @@ Generic mode sorts by score. Default mode sorts definitions, conditions, then di
 ## Give context explicitly
 
 ```text
-context: "[[Projects/Workshop]]"
+context: "[[Projects/Workshop#Goals]] [[Notes/Example#^example-id]]"
 ```
 
 Context changes how Jev interprets the question. It does not restrict retrieval to that note.
 The plugin does not follow outgoing links from context notes.
-Only add context you intend to send to Jev.
+Only add context you intend to send to Jev. A note link includes the whole note.
+A heading link includes that section and its subsections; a block link includes that block.
+Heading names must match exactly. Results show the context size.
+Context over 48,000 characters is rejected; choose smaller sections or blocks.
 
 ## Understand retrieval and scoring
 
@@ -68,6 +72,23 @@ The default window contains at most 1,000 blocks before overlap removal.
 This is not exhaustive classification of every vault block.
 Useful passages outside the window cannot be selected by Jev.
 Passing the threshold does not guarantee display: the result limit still applies.
+The result header shows the shortlist size, searchable block count, and removed overlaps.
+A warning appears when more matches were available beyond the window.
+
+Scoring counts distinguish cached scores, shared work, new requests, retries, and skipped passages.
+Expand **passages below minimum score** to inspect rejected passages, highest scores first, 25 at a time.
+Select **Include passage** to add a rejected passage to your selection. It keeps its score and gains a **Manually included** label.
+Manual additions sit outside the automatic result limit and are included by **Save passages**.
+**Undo inclusion** removes the override; a passage that qualifies automatically can still appear.
+
+Choices persist in a hidden comment in the query note and sync with that note.
+They belong to the question, rubric, and explicit context links; changing these starts a separate selection.
+Threshold and result-limit changes retain your choices. Identical queries in the same note share choices.
+A passage can stay included even when it falls outside the retrieval window; its last recorded score is retained.
+Changed, missing, renamed, or ambiguous sources are flagged for review, with **Remove inclusion** available.
+Overlapping selections must be resolved before saving.
+
+Local matches do not use the Jev threshold.
 
 Up to 16 requests run concurrently per plugin instance.
 Throttling reduces concurrency; successful requests gradually restore it.
@@ -85,7 +106,9 @@ The query remains live. The saved selection does not change with later query res
 
 Native embeds keep source text live and create backlinks to the selection note.
 Saving passages reuses existing block IDs and adds missing IDs to source Markdown.
-The plugin checks source ranges, then waits for Obsidian to index the IDs.
+The plugin checks source ranges, then waits for Obsidian to index the exact IDs.
+A countdown shows the remaining wait before timeout. **Retry save** waits again using the IDs already written.
+Overlap errors name the source file and conflicting line ranges.
 The link back to the query uses its full path to avoid same-name ambiguity.
 
 Expanded neighbours are not saved.
@@ -97,7 +120,7 @@ Saving again creates a new note. It does not overwrite your earlier selection.
 Changes to several source files cannot be atomic together.
 If a later file changes while saving passages, already-added IDs remain and are safe to keep.
 
-Read the passages before saving them. The plugin has no keep/remove/reorder review interface yet.
+Read the passages before saving them. The plugin supports manual inclusion and undo, but has no general exclude or reorder interface yet.
 Use the [review pipeline](PIPELINE.md) for an auditable manual review.
 
 ## Cache and refresh
@@ -120,11 +143,11 @@ Embedding files can sync with the plugin folder; in-memory passage vectors rebui
 | Symptom | Action |
 | --- | --- |
 | Results say Local match | Add a Jev API key to check which passages answer your question. |
-| Embeddings unavailable | Use Download search model; keyword retrieval remains available. |
+| Embeddings unavailable | Try Restart local search to reload the existing model. Download search model if files are missing. Keyword retrieval remains available. |
 | No passages qualify | Read the criteria and threshold; this does not prove the vault lacks useful material. |
 | Scoring is slow | Start with one open query; new candidates need API calls. Cached scores reuse earlier work. |
 | Source changed while saving passages | Refresh the query, then save again. |
-| Obsidian is still indexing IDs | Wait briefly, refresh, and retry. No broken selection note is created on timeout. |
+| Obsidian is still indexing IDs | Select Retry save. No selection note is created until its source links resolve. |
 | Missing block in an saved selection | Check whether the source or ID was removed. Reopen after indexing completes. |
 | Unexpected source attribution | Read the surrounding source; the note title does not identify every passage's speaker. |
 

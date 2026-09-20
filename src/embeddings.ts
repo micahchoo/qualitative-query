@@ -42,7 +42,7 @@ export class EmbeddingIndex {
       this.worker.onerror = () => this.fail(new Error("Embedding worker failed. Keyword retrieval remains available."));
       await this.call("load", { weights, tokenizer: parseObject(new TextDecoder().decode(tokenizer)), config: parseObject(new TextDecoder().decode(config)) }, [weights]);
       this.status = "Search model ready. Runs on your device.";
-    } catch (error) { this.status = "Using keyword search. Select Download search model to restore search by meaning."; this.fail(error instanceof Error ? error : new Error(String(error))); throw error; }
+    } catch (error) { this.status = "Using keyword search. Restart local search to retry, or download the model if it is missing."; this.fail(error instanceof Error ? error : new Error(String(error))); throw error; }
   }
 
   search(question: string, blocks: Block[], limit: number): Promise<SemanticHit[]> {
@@ -82,7 +82,7 @@ export class EmbeddingIndex {
 
   private fail(error: Error): void {
     this.failure = error;
-    this.status = "Using keyword search. Select Download search model to restore search by meaning.";
+    this.status = "Using keyword search. Restart local search to retry, or download the model if it is missing.";
     this.worker?.terminate(); this.worker = undefined;
     for (const pending of this.pending.values()) { window.clearTimeout(pending.timer); pending.reject(asError(error)); }
     this.pending.clear();

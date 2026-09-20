@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {planBlockIds} from '../src/bake';
+import {planBlockIds, PendingSave} from '../src/bake';
 import {safeTitle} from '../src/notes';
 import {parseMarkdown} from '../src/markdown';
 import {queryMarkdown,PRESETS} from '../src/builder';
@@ -70,8 +70,13 @@ it('bakes in selection order with source and query links, without overwriting an
   fileManager:{generateMarkdownLink:(f:any,_from:string,sub='')=>`[[${f.path}${sub}]]`}};
  const judgement=(path:string)=>({candidate:{...parseMarkdown(path,texts.get(path)!)[0],lexicalScore:1},score:.9,contribution:'other' as const,scores:{relevant:.9}});
  const result={status:'ready' as const,judgements:[judgement('b.md'),judgement('a.md')],candidates:[]};
- setTimeout(()=>{indexed=true;},30);
- const file=await bakeNote(app,result,{question:'Question',folder:'Queries',contextPaths:[],criteria:{mode:'generic'}},'Queries/q.md');
+ const pending=await bakeNote(app,result,{question:'Question',folder:'Queries',contextPaths:[],criteria:{mode:'generic'}},'Queries/q.md',{timeoutMs:0}).catch(error=>error);
+ expect(pending).toBeInstanceOf(PendingSave);
+ const anchored=texts.get('a.md');
+ app.vault.process=async()=>{throw Error('Retry must not rewrite sources');};
+ indexed=true;
+ const file=await pending.retry();
+ expect(texts.get('a.md')).toBe(anchored);
  const output=texts.get(file.path)!;
  expect(file.path).toBe('Baked queries/Question 2.md');expect(texts.get('Baked queries/Question.md')).toBe('Keep me');
  expect(output).toContain('[Saved question](Queries/q.md)');expect(output.indexOf('![[b.md#^qq-')).toBeLessThan(output.indexOf('![[a.md#^qq-'));

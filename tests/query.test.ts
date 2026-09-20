@@ -24,3 +24,9 @@ it("parses the same authored question and context with LF and CRLF", () => {
 it("requires a complete frontmatter closing delimiter", () => {
   expect(() => parseQuery("Queries/Title.md", "---\nquestion: Test\n---suffix", "Queries")).toThrow("closing delimiter");
 });
+
+it("preserves multiline prose with a colon and rejects unknown structured fields", () => {
+ expect(parseQuery("Queries/Title.md", "", "Queries", "Consider: grief\nand the role of memory").question).toBe("Consider: grief\nand the role of memory");
+ expect(() => parseQuery("Queries/Title.md", "", "Queries", "question: grief\nlimt: 4")).toThrow("Unknown query field: limt");
+ expect(() => parseQuery("Queries/Title.md", "", "Queries", "question: grief\nbroken line")).toThrow("Invalid query line");
+});

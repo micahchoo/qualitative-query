@@ -17,7 +17,7 @@ describe("query engine", () => {
     const result = await engine.run(spec, 10, 10, 0.4, progress);
     expect(progress.mock.calls).toEqual([[0, 2], [1, 2], [2, 2]]);
     expect(result.status).toBe("ready");
-    expect(rank).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.anything(), expect.stringContaining("design disagreement"), expect.any(Function));
+    expect(rank).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.anything(), expect.stringContaining("design disagreement"), expect.any(Function), expect.any(Function));
     expect(rank).toHaveBeenCalledTimes(2);
   });
 
@@ -256,4 +256,25 @@ it("preserves retrieval warnings through partial and final Jev results", async (
   const result = await engine.run({ ...spec, contextPaths: [], criteria: { mode: "generic" } }, 10, 6, 0.5, undefined, partial);
   expect(result.warning).toBe("Keyword fallback for this question.");
   expect(partial.mock.calls[0][0].warning).toContain("Keyword fallback for this question.");
+});
+
+it("accounts for rejected scores and reuses them after lowering the threshold", async () => {
+ const corpus = [block("a", "a.md", "Conflict one"), block("b", "b.md", "Conflict two")];
+ const rank = vi.fn(async (_question: string, passage: string) => ({ answers: { relevant: { noul: passage.includes("one") ? 0.8 : 0.2 } } }));
+ const engine = new QueryEngine({ rank }, () => corpus);
+ const query = { ...spec, contextPaths: [], criteria: { mode: "generic" as const } };
+ const first = await engine.run(query, 10, 6, 0.5);
+ expect(first.stats).toMatchObject({ checked: 2, cached: 0, requested: 2, passed: 1, skipped: 0 });
+ expect(first.belowThreshold?.map(j => j.score)).toEqual([0.2]); expect(first.judgements).toHaveLength(1);
+ const second = await engine.run(query, 10, 6, 0.1);
+ expect(second.stats).toMatchObject({ checked: 2, cached: 2, requested: 0, passed: 2 });
+ expect(second.belowThreshold).toEqual([]); expect(rank).toHaveBeenCalledTimes(2);
+});
+it("counts shared requests separately and exposes all-rejected results", async () => {
+ const corpus = [block("a", "a.md", "Conflict same"), block("b", "b.md", "Conflict same")];
+ const rank = vi.fn(async () => ({ answers: { relevant: { noul: 0.1 } } }));
+ const engine = new QueryEngine({ rank }, () => corpus);
+ const result = await engine.run({ ...spec, contextPaths: [], criteria: { mode: "generic" } }, 10, 6, 0.5);
+ expect(result.stats).toMatchObject({ checked: 2, requested: 1, shared: 1, passed: 0 });
+ expect(result.status).toBe("empty"); expect(result.belowThreshold).toHaveLength(2);
 });

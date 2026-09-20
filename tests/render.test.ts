@@ -63,3 +63,20 @@ it("ignores an older expansion failure after a newer render succeeds", async () 
     expect(content.children).toHaveLength(1);
   } finally { owner.unload(); vi.unstubAllGlobals(); }
 });
+it("offers inclusion for rejected passages and undo for manual selections", async () => {
+  vi.mocked(MarkdownRenderer.render).mockReset().mockResolvedValue(undefined);
+  vi.stubGlobal("createEl", () => new ElementAdapter());
+  const owner = new Component(), container = new ElementAdapter();
+  const include = vi.fn().mockResolvedValue(undefined);
+  const find = (element: ElementAdapter, text: string): ElementAdapter | undefined => element.text === text ? element : element.children.map(child => find(child, text)).find(Boolean);
+  try {
+    await renderResult({} as App, container as unknown as HTMLElement, { ...result, judgements: [result.judgements[0]] }, spec, owner, undefined, include, true);
+    await find(container, "Include passage")!.events.get("click")!();
+    expect(include).toHaveBeenCalledWith(result.judgements[0], true);
+    const selected = { ...result.judgements[0], manuallyIncluded: true };
+    await renderResult({} as App, container as unknown as HTMLElement, { ...result, judgements: [selected] }, spec, owner, undefined, include);
+    expect(find(container, "Manually included")).toBeDefined();
+    await find(container, "Undo inclusion")!.events.get("click")!();
+    expect(include).toHaveBeenLastCalledWith(selected, false);
+  } finally { owner.unload(); vi.unstubAllGlobals(); }
+});

@@ -23,7 +23,7 @@ function frontmatter(text: string): Record<string, string | number | boolean | s
 function links(value: unknown): string[] {
   if (Array.isArray(value)) return value.flatMap(links);
   if (typeof value !== "string") return [];
-  return [...value.matchAll(/!?\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]/g)].map((m) => m[1].trim());
+  return [...value.matchAll(/!?\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g)].map((m) => m[1].trim());
 }
 
 export function parseQuery(path: string, text: string, folder: string, blockSource?: string): QuerySpec {
@@ -32,9 +32,21 @@ export function parseQuery(path: string, text: string, folder: string, blockSour
   const fm = frontmatter(text);
   const code = blockSource ?? text.match(/```(?:qualitative-query|qq)\s*\n([\s\S]*?)```/i)?.[1] ?? "";
   const fields: Record<string, string | number | boolean | string[]> = { ...fm };
-  for (const line of code.split("\n")) { const m = line.match(/^([\w-]+):\s*(.*)$/); if (m) fields[m[1]] = scalar(m[2]); }
+  const supported = new Set(["question", "criteria", "mode", "instructions", "true", "false", "limit", "threshold", "adjacent", "context", "contexts"]);
+  const entries = code.split("\n").filter(line => line.trim()).map(line => ({ line, match: /^\s*([\w-]+):\s*(.*)$/.exec(line) }));
+  const hasFields = entries.some(({ match }) => match && supported.has(match[1]));
+  if (hasFields) for (const { line, match } of entries) {
+    if (!match) throw new Error(`Invalid query line: ${line}. Use field: value, or write the whole question without fields.`);
+    if (!supported.has(match[1])) throw new Error(`Unknown query field: ${match[1]}. Use question, context, limit, threshold, adjacent, mode, instructions, true, or false.`);
+    fields[match[1]] = scalar(match[2]);
+  }
+  for (const name of ["question", "instructions", "true", "false"] as const) {
+    if (fields[name] !== undefined && typeof fields[name] !== "string") throw new Error(`${name} must be text.`);
+  }
+  for (const name of ["mode", "criteria"] as const) {
+    if (fields[name] !== undefined && !["generic", "default", "definition"].includes(String(fields[name]))) throw new Error(`${name} must be generic, default, or definition.`);
+  }
   const title = path.split("/").at(-1)!.replace(/\.md$/i, "");
-  const hasFields = /^\s*[\w-]+\s*:/m.test(code);
   const question = typeof fields.question === "string" && fields.question.trim() ? fields.question.trim() : (!hasFields && code.trim() ? code.trim() : title);
   const explicitMode = fields.criteria === "generic" || fields.mode === "generic" ? "generic" : fields.criteria === "default" || fields.criteria === "definition" || fields.mode === "default" || fields.mode === "definition" ? "default" : undefined;
   const authoredRubric = [fields.instructions, fields.true, fields.false].some((value) => typeof value === "string" && value.trim());
@@ -45,15 +57,16 @@ export function parseQuery(path: string, text: string, folder: string, blockSour
   if (typeof fields.false === "string") criteria.false = fields.false;
   return {
     question, folder, contextPaths: links(fields.context ?? fields.contexts), criteria,
-    limit: validatedNumber(fields.limit, "limit", 1, 100),
+    limit: validatedNumber(fields.limit, "limit", 1, 100, true),
     threshold: validatedNumber(fields.threshold, "threshold", 0, 1),
-    adjacent: validatedNumber(fields.adjacent, "adjacent", 0, 5) ?? 0,
+    adjacent: validatedNumber(fields.adjacent, "adjacent", 0, 5, true) ?? 0,
   };
 }
 
-function validatedNumber(value: unknown, name: string, min: number, max: number): number | undefined {
+function validatedNumber(value: unknown, name: string, min: number, max: number, integer = false): number | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max) throw new Error(`${name} must be between ${min} and ${max}.`);
+  if (integer && !Number.isInteger(value)) throw new Error(`${name} must be a whole number.`);
   return value;
 }
 
@@ -61,8 +74,11 @@ export function resolveContext(app: App, queryFile: TFile, paths: string[]): Set
   const result = new Set<string>();
   const unresolved: string[] = [];
   for (const path of paths) {
-    const file = app.metadataCache.getFirstLinkpathDest(path, queryFile.path);
-    if (file) result.add(file.path); else unresolved.push(path);
+    const hash = path.indexOf("#");
+    const note = hash < 0 ? path : path.slice(0, hash);
+    const fragment = hash < 0 ? "" : path.slice(hash);
+    const file = note ? app.metadataCache.getFirstLinkpathDest(note, queryFile.path) : queryFile;
+    if (file) result.add(file.path + fragment); else unresolved.push(path);
   }
   if (unresolved.length) throw new Error(`Context note${unresolved.length > 1 ? "s" : ""} not found: ${unresolved.join(", ")}`);
   return result;

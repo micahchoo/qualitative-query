@@ -46,6 +46,7 @@ export interface Candidate extends Block {
 }
 
 export interface Judgement {
+  manuallyIncluded?: boolean;
   candidate: Candidate;
   score: number;
   contribution: Contribution;
@@ -64,9 +65,28 @@ export interface JevResponse {
   usage?: { input_tokens?: number; output_tokens?: number };
 }
 
+export interface QueryStats {
+  searchable: number;
+  shortlisted: number;
+  overlapRemoved: number;
+  windowLimit: number;
+  truncated: boolean;
+  checked: number;
+  cached: number;
+  shared: number;
+  requested: number;
+  retries: number;
+  skipped: number;
+  passed: number;
+  contextChars: number;
+  threshold: number;
+}
+
 export interface QueryResult {
   status: "ready" | "needs-key" | "error" | "empty";
   judgements: Judgement[];
+  belowThreshold?: Judgement[];
+  stats?: QueryStats;
   candidates: Candidate[];
   error?: string;
   warning?: string;

@@ -2,9 +2,9 @@ import { EmbeddingIndex } from "./embeddings";
 import { hybridShortlist, shortlistAsync } from "./search";
 import type { Block, Candidate } from "./types";
 
-export interface RetrievalResult { candidates: Candidate[]; warning?: string; }
+export interface RetrievalResult { candidates: Candidate[]; warning?: string; truncated?: boolean; }
 type SemanticIndex = Pick<EmbeddingIndex, "search" | "dispose" | "status">;
-const FALLBACK = "Using keyword search. For related wording, download the search model in settings.";
+const FALLBACK = "Using keyword search. Restart local search in settings to retry. If the model is missing, select Download search model.";
 
 /** Owns one semantic index, explicit restoration, and per-search fallback. */
 export class LocalRetrieval {
@@ -24,9 +24,13 @@ export class LocalRetrieval {
       index.search(question, blocks, pool).catch(() => null),
     ]);
     if (this.stopped) throw new Error("Local search is closed.");
-    return hits
-      ? { candidates: hybridShortlist(question, blocks, hits, limit, keywords) }
-      : { candidates: keywords.slice(0, limit), warning: FALLBACK };
+    const ranked = hits ? hybridShortlist(question, blocks, hits, limit + 1, keywords) : keywords;
+    return { candidates: ranked.slice(0, limit), truncated: ranked.length > limit, ...(hits ? {} : { warning: FALLBACK }) };
+  }
+
+  restart(): void {
+    if (this.stopped) throw new Error("Local search is closed.");
+    this.semantic?.dispose(); this.semantic = undefined;
   }
 
   restore(): Promise<void> {

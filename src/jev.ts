@@ -8,7 +8,7 @@ const ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 export class JevClient {
   constructor(private readonly apiKey: string, private readonly model: string, private readonly transport: JevTransport = defaultTransport, private readonly sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms))) {}
 
-  async rank(question: string, candidate: string, criteria: QueryCriteria, context = "", onThrottle?: () => void): Promise<JevResponse> {
+  async rank(question: string, candidate: string, criteria: QueryCriteria, context = "", onThrottle?: () => void, onRetry?: () => void): Promise<JevResponse> {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (this.apiKey.trim()) headers.Authorization = `Bearer ${this.apiKey}`;
     else throw new Error("TypeSafe API key is not configured.");
@@ -27,7 +27,7 @@ export class JevClient {
       const response = await this.transport.post(ENDPOINT, headers, body);
       if (response.status >= 200 && response.status < 300) return response.json as JevResponse;
       if (response.status === 429 || response.status === 529) onThrottle?.();
-      if ((response.status === 429 || response.status === 529) && attempt < 3) { await this.sleep(250 * 2 ** attempt); attempt++; continue; }
+      if ((response.status === 429 || response.status === 529) && attempt < 3) { onRetry?.(); await this.sleep(250 * 2 ** attempt); attempt++; continue; }
       if (response.status === 401 || response.status === 403) throw new Error(`Jev authentication failed (${response.status}). Check the TypeSafe API key.`);
       if (response.status === 422) throw new Error("Jev rejected the request (422). Check the model and typed question payload.");
       if (response.status === 429) throw new Error("Jev rate limit persisted after retries (429).");

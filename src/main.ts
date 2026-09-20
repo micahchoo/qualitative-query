@@ -1,7 +1,9 @@
+import { applyInclusions, inclusionFor, updateInclusions } from "./manual-selection";
+import { readContextBlocks } from "./context";
 import { parseObject } from "./validation";
 declare const EMBEDDING_WORKER_SOURCE: string;
 import { QueryBuilder } from "./builder";
-import { bakeNote, BAKED_FOLDER } from "./bake";
+import { bakeNote, BAKED_FOLDER, PendingSave } from "./bake";
 import { Notice, Component, MarkdownRenderChild, Plugin, TFile, type MarkdownPostProcessorContext, type TAbstractFile } from "obsidian";
 import { EmbeddingIndex } from "./embeddings";
 import { downloadEmbeddings } from "./embedding-assets";
@@ -23,6 +25,7 @@ const QUERY_FENCE = /^ {0,3}(?:`{3,}|~{3,})(?:qualitative-query|qq)\s*$/m;
 class QueryView extends MarkdownRenderChild {
   private version = 0;
   private stopped = false;
+  private saving = false;
   private content?: Component;
 
   constructor(
@@ -38,7 +41,7 @@ class QueryView extends MarkdownRenderChild {
     void this.refresh();
   }
 
-  invalidate(): void { this.version++; }
+  invalidate(): void { if (!this.saving) this.version++; }
 
   onunload(): void {
     this.stopped = true;
@@ -49,7 +52,7 @@ class QueryView extends MarkdownRenderChild {
   }
 
   async refresh(): Promise<void> {
-    if (this.stopped) return;
+    if (this.stopped || this.saving) return;
     const version = ++this.version;
     const current = () => !this.stopped && version === this.version && !this.plugin.stopped;
     if (this.content) { this.removeChild(this.content); this.content = undefined; }
@@ -112,26 +115,69 @@ class QueryView extends MarkdownRenderChild {
   }
 
   private async display(result: QueryResult, spec: QuerySpec, current: () => boolean, allowBake = false): Promise<void> {
+    const baseResult = result;
+    const queryFile = this.plugin.app.vault.getAbstractFileByPath(this.sourcePath);
+    const manual = allowBake && queryFile instanceof TFile
+      ? await applyInclusions(await this.plugin.app.vault.read(queryFile), spec, result, this.plugin.index.blocks)
+      : { result, missing: [] };
+    result = manual.result;
     const content = new Component();
     this.addChild(content);
     const stage = createEl("div");
     stage.addClass("qq-view");
     try {
       await renderResult(this.plugin.app, stage, result, spec, content, (candidate, adjacent) =>
-        expandBlock(candidate, this.plugin.index.blocksForPath(candidate.path), adjacent));
+        expandBlock(candidate, this.plugin.index.blocksForPath(candidate.path), adjacent),
+        allowBake && queryFile instanceof TFile ? async (judgement, include) => {
+          if (!current()) return;
+          const entry = await inclusionFor(judgement);
+          if (!current()) return;
+          this.saving = true;
+          try { await this.plugin.app.vault.process(queryFile, text => updateInclusions(text, spec, entry, include)); }
+          finally { this.saving = false; }
+          if (current()) await this.display(baseResult, spec, current, true);
+        } : undefined);
+      for (const missing of manual.missing) {
+        const warning = stage.createDiv({ cls: "qq-warning", text: missing.message });
+        const remove = warning.createEl("button", { text: "Remove inclusion" });
+        content.registerDomEvent(remove, "click", async () => {
+          if (!current() || !(queryFile instanceof TFile) || remove.disabled) return;
+          remove.disabled = true; this.saving = true;
+          try {
+            await this.plugin.app.vault.process(queryFile, text => updateInclusions(text, spec, missing.entry, false));
+            this.saving = false;
+            if (current()) await this.display(baseResult, spec, current, true);
+          } catch (error) { this.saving = false; remove.disabled = false; new Notice(error instanceof Error ? error.message : String(error)); }
+        });
+      }
       if (allowBake && result.status === "ready" && result.judgements.length) {
         const tools = createEl("div");
         tools.className = "qq-bake-actions";
         const button = tools.createEl("button", { text: "Save passages" });
         tools.createEl("small", { text: " Creates a note with these passages linked to their sources. Adds missing block IDs to source notes. Nearby context is not saved." });
+        const saveStatus = tools.createEl("small", { text: "" });
+        const controller = new AbortController();
+        content.register(() => controller.abort());
+        let save = () => bakeNote(this.plugin.app, result, spec, this.sourcePath, {
+          signal: controller.signal,
+          onWait: (pending, ms) => saveStatus.setText(` Waiting for ${pending} source links · timeout in ${Math.ceil(ms / 1000)}s.`),
+        });
         content.registerDomEvent(button, "click", async () => {
-          if (!current()) return;
+          if (!current() || controller.signal.aborted) return;
           button.disabled = true;
+          this.saving = true;
           try {
-            const file = await bakeNote(this.plugin.app, result, spec, this.sourcePath);
+            const file = await save();
+            this.saving = false;
+            saveStatus.setText(" Saved.");
             new Notice("Passages saved. Open a source note’s Backlinks to see the connection.");
             await this.plugin.app.workspace.getLeaf(true).openFile(file, { state: { mode: "preview" } });
-          } catch (error) { new Notice(error instanceof Error ? error.message : String(error)); button.disabled = false; }
+          } catch (error) {
+            if (controller.signal.aborted) return;
+            if (error instanceof PendingSave) { save = error.retry; button.setText("Retry save"); }
+            else this.saving = false;
+            saveStatus.setText(error instanceof Error ? error.message : String(error)); button.disabled = false;
+          }
         });
         stage.prepend(tools);
       }
@@ -256,7 +302,7 @@ export default class QualitativeQueryPlugin extends Plugin {
     try {
       this.client = this.settings.apiKey.trim() ? new JevClient(this.settings.apiKey, this.settings.model) : null;
     } catch (error) { this.client = null; this.clientError = error instanceof Error ? error.message : String(error); }
-    if (this.index) this.engine = new QueryEngine(this.client, () => this.index.blocks.filter(block => !QUERY_FENCE.test(block.text)), path => this.contextBlocks(path), `${SCORING_VERSION}:${TYPESAFE_ENDPOINT}:${this.settings.model}`, this.scoreCache, (question, blocks, limit) => this.retrieval.search(question, blocks, limit));
+    if (this.index) this.engine = new QueryEngine(this.client, () => this.index.blocks.filter(block => !QUERY_FENCE.test(block.text)), path => readContextBlocks(this.app, path), `${SCORING_VERSION}:${TYPESAFE_ENDPOINT}:${this.settings.model}`, this.scoreCache, (question, blocks, limit) => this.retrieval.search(question, blocks, limit));
     this.scheduleQueries();
   }
 
@@ -264,17 +310,14 @@ export default class QualitativeQueryPlugin extends Plugin {
 
   embeddingStatus(): string { return this.retrieval.status; }
 
+  restartLocalSearch(): void {
+    this.retrieval.restart(); this.invalidateViews(); this.scheduleQueries();
+  }
+
   async restoreEmbeddings(): Promise<void> {
     await this.retrieval.restore();
     if (this.stopped) return;
     this.invalidateViews(); this.scheduleQueries();
-  }
-
-  private async contextBlocks(path: string): Promise<Block[]> {
-    const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile)) throw new Error(`Context note not found: ${path}`);
-    const text = await this.app.vault.cachedRead(file);
-    return [{ id: path, path, lineStart: 1, lineEnd: text.split("\n").length, text, searchText: text, kind: "paragraph", headingPath: [] }];
   }
 
   private exclusions(): string[] {
