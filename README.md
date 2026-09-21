@@ -64,6 +64,7 @@ The score is a selection aid, not proof of relevance. Read the passages before s
 | Search by meaning | Finds related wording with an optional local model. |
 | Questions folder | Holds saved questions; default `Queries`. |
 | Passages to check | Maximum shortlisted passages before overlap removal. Default: 1,000. |
+| Passages per request | How many passages travel to Jev together. Default: 10. Set 1 to check each on its own. |
 | Passages to show | Maximum results. The question builder uses six. |
 | Minimum Jev score | Cutoff for matching passages. The question builder uses 0.5. |
 | Skip folders | Comma-separated folders to leave out of retrieval. |
@@ -95,6 +96,7 @@ Desktop testing covers the main question and passage-saving flows. Mobile testin
 
 - [User guide](docs/guide.md): explicit context, ordering, cache behavior, and troubleshooting.
 - [Review pipeline](docs/PIPELINE.md): assess selections and check their source connections.
+- [Passages per request](docs/BATCHING.md): how batching works, what it saves, and how to measure it.
 - [Testing status](docs/TESTING.md): completed checks and remaining manual checks.
 - [Deployment](docs/DEPLOY.md): build, release, and community-directory submission.
 

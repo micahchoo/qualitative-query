@@ -12,6 +12,7 @@ import { ScoreCache } from "./score-cache";
 import { VaultIndex } from "./indexer";
 import { parseQuery, resolveContext } from "./query";
 import { JevClient } from "./jev";
+import { PassageBatcher } from "./batch";
 import { QueryEngine } from "./engine";
 import { renderLoading, renderResult } from "./render";
 import { expandBlock } from "./markdown";
@@ -198,7 +199,8 @@ export default class QualitativeQueryPlugin extends Plugin {
   settings: Settings = { ...DEFAULT_SETTINGS };
   index!: VaultIndex;
   engine!: QueryEngine;
-  client: Pick<JevClient, "rank"> | null = null;
+  client: (Pick<JevClient, "rank"> & { batchSize?: number }) | null = null;
+  private batcher?: PassageBatcher;
   clientError = "";
   indexError = "";
   stopped = false;
@@ -307,11 +309,19 @@ export default class QualitativeQueryPlugin extends Plugin {
   rebuildClient(): void {
     this.invalidateViews();
     this.engine?.dispose();
+    this.batcher?.dispose(); this.batcher = undefined;
     this.clientError = "";
     try {
-      this.client = this.settings.apiKey.trim() ? new JevClient(this.settings.apiKey, this.settings.model) : null;
+      if (!this.settings.apiKey.trim()) this.client = null;
+      else {
+        const client = new JevClient(this.settings.apiKey, this.settings.model);
+        this.client = this.settings.passagesPerRequest > 1 ? (this.batcher = new PassageBatcher(client, this.settings.passagesPerRequest)) : client;
+      }
     } catch (error) { this.client = null; this.clientError = error instanceof Error ? error.message : String(error); }
-    if (this.index) this.engine = new QueryEngine(this.client, () => this.searchableBlocks(), path => readContextBlocks(this.app, path), `${SCORING_VERSION}:${TYPESAFE_ENDPOINT}:${this.settings.model}`, this.scoreCache, (question, blocks, limit, signal) => this.retrieval.search(question, blocks, limit, signal));
+    // The batch size is part of the score's identity: a passage judged beside others was asked
+    // a differently shaped question, so its score is only reused for that same shape.
+    const namespace = `${SCORING_VERSION}:${TYPESAFE_ENDPOINT}:${this.settings.model}${this.client?.batchSize && this.client.batchSize > 1 ? `:batch-${this.client.batchSize}` : ""}`;
+    if (this.index) this.engine = new QueryEngine(this.client, () => this.searchableBlocks(), path => readContextBlocks(this.app, path), namespace, this.scoreCache, (question, blocks, limit, signal) => this.retrieval.search(question, blocks, limit, signal));
     this.scheduleQueries();
   }
 
@@ -390,6 +400,7 @@ export default class QualitativeQueryPlugin extends Plugin {
     for (const timer of this.fileTimers.values()) window.clearTimeout(timer);
     this.fileTimers.clear();
     this.engine?.dispose();
+    this.batcher?.dispose(); this.batcher = undefined;
     this.retrieval?.dispose();
     this.index?.dispose();
     this.corpusSource = undefined; this.corpus = [];

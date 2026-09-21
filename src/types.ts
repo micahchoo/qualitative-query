@@ -75,6 +75,9 @@ export interface QueryStats {
   cached: number;
   shared: number;
   requested: number;
+  requests: number;
+  inputTokens: number;
+  requestMs: number;
   retries: number;
   skipped: number;
   passed: number;

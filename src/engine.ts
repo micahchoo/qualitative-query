@@ -26,21 +26,28 @@ interface QueueItem {
   reject: (error: unknown) => void;
 }
 
+/** Slots are passages. One request carries `step` of them, so the cap moves a request at a time. */
 class ConcurrencyGate {
   private running = 0;
-  private limit = MAX_CONCURRENCY;
+  private readonly maximum: number;
+  private limit: number;
   private lastThrottle = -Infinity;
   private successes = 0;
 
+  constructor(private readonly step = 1) {
+    this.maximum = this.limit = MAX_CONCURRENCY * step;
+  }
+
   throttle(): void {
     const now = Date.now();
-    if (now - this.lastThrottle >= 1000) this.limit = Math.max(1, Math.floor(this.limit / 2));
+    if (now - this.lastThrottle >= 1000) this.limit = Math.max(this.step, Math.floor(this.limit / 2));
     this.lastThrottle = now; this.successes = 0;
   }
 
+  /** One extra request per window of successes: halving costs one window to undo, not sixteen. */
   success(): void {
-    if (Date.now() - this.lastThrottle >= 5000 && ++this.successes >= 32) {
-      this.limit = Math.min(MAX_CONCURRENCY, this.limit + 1); this.successes = 0;
+    if (Date.now() - this.lastThrottle >= 5000 && ++this.successes >= this.limit) {
+      this.limit = Math.min(this.maximum, this.limit + this.step); this.successes = 0;
       this.pump();
     }
   }
@@ -129,17 +136,20 @@ export class QueryEngine {
   private runs = new Set<AbortController>();
   private generation = 0;
   private disposed = false;
-  private readonly gate = new ConcurrencyGate();
+  private readonly gate: ConcurrencyGate;
 
   constructor(
-    private readonly client: Pick<JevClient, "rank"> | null,
+    private readonly client: (Pick<JevClient, "rank"> & { batchSize?: number }) | null,
     private readonly getBlocks: () => Block[],
     private readonly getSourceBlocks: ContextReader = () => [],
     /** Include provider/model identity when an engine is reused across clients. */
     private readonly cacheNamespace = "",
     private readonly persistentCache?: Pick<ScoreCache, "get" | "set"> & Partial<Pick<ScoreCache, "getMany">>,
     private readonly retrieve: (question: string, blocks: Block[], limit: number, signal?: AbortSignal) => RetrievalResult | Promise<RetrievalResult> = (question, blocks, limit) => ({ candidates: shortlist(question, blocks, limit), truncated: shortlist(question, blocks, limit + 1).length > limit }),
-  ) {}
+  ) {
+    // Hold enough passages in flight to fill the client's batches; requests stay near the cap.
+    this.gate = new ConcurrencyGate(Math.max(1, client?.batchSize ?? 1));
+  }
 
   clearCache(): void { this.cache.clear(); }
 
@@ -175,7 +185,8 @@ export class QueryEngine {
     const candidates = dedupeCandidates(retrieval.candidates);
     const stats: QueryStats = { searchable: corpus.length, shortlisted: retrieval.candidates.length,
       overlapRemoved: retrieval.candidates.length - candidates.length, windowLimit: Math.min(MAX_CANDIDATES, Math.max(1, candidateLimit)),
-      truncated: retrieval.truncated ?? false, checked: 0, cached: 0, shared: 0, requested: 0, retries: 0,
+      truncated: retrieval.truncated ?? false, checked: 0, cached: 0, shared: 0, requested: 0,
+      requests: 0, inputTokens: 0, requestMs: 0, retries: 0,
       skipped: 0, passed: 0, contextChars: context.length, threshold };
     const warning = (message?: string) => [retrieval.warning, message].filter(Boolean).join(" ") || undefined;
     this.assertCurrent(generation, signal);
@@ -302,7 +313,11 @@ export class QueryEngine {
         release = await this.gate.acquire(generation, () => !this.disposed && generation === this.generation && !sharedSignal.aborted);
         this.assertCurrent(generation, sharedSignal);
         stats.requested++;
-        const response = await this.client!.rank(spec.question, passage, spec.criteria, context, () => this.gate.throttle(), () => { stats.retries++; }, sharedSignal);
+        const response = await this.client!.rank(spec.question, passage, spec.criteria, context, {
+          onThrottle: () => this.gate.throttle(),
+          onRetry: () => { stats.retries++; },
+          onRequest: (report) => { stats.requests += report.requests; stats.inputTokens += report.inputTokens; stats.requestMs += report.elapsedMs; },
+        }, sharedSignal);
         this.gate.success();
         release();
         this.assertCurrent(generation, sharedSignal);

@@ -24,7 +24,7 @@ describe("query lifetimes", () => {
     const controller = new AbortController();
     let finish!: (value: typeof response) => void;
     let transportSignal!: AbortSignal;
-    const rank = vi.fn(async (_q, _p, _c, _ctx, _throttle, _retry, signal) => {
+    const rank = vi.fn(async (_q, _p, _c, _ctx, _hooks, signal) => {
       transportSignal = signal;
       return new Promise<typeof response>(resolve => { finish = resolve; });
     });
@@ -42,7 +42,7 @@ describe("query lifetimes", () => {
   it("cancels active transport when its last consumer closes and never starts its queue", async () => {
     const controller = new AbortController();
     const signals: AbortSignal[] = [];
-    const rank = vi.fn(async (_q, _p, _c, _ctx, _throttle, _retry, signal: AbortSignal) => {
+    const rank = vi.fn(async (_q, _p, _c, _ctx, _hooks, signal: AbortSignal) => {
       signals.push(signal);
       return new Promise<typeof response>((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
     });
@@ -61,7 +61,7 @@ describe("query lifetimes", () => {
     let finish!: (value: { status: number; json: unknown }) => void;
     const post = vi.fn(() => new Promise<{ status: number; json: unknown }>(resolve => { finish = resolve; }));
     const client = new JevClient("key", "model", { post });
-    const run = client.rank("q", "p", { mode: "generic" }, "", undefined, undefined, controller.signal);
+    const run = client.rank("q", "p", { mode: "generic" }, "", undefined, controller.signal);
     controller.abort(); finish({ status: 429, json: {} });
     await expect(run).rejects.toThrow(/cancelled/);
     expect(post).toHaveBeenCalledTimes(1);

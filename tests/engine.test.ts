@@ -17,7 +17,7 @@ describe("query engine", () => {
     const result = await engine.run(spec, 10, 10, 0.4, progress);
     expect(progress.mock.calls).toEqual([[0, 2], [1, 2], [2, 2]]);
     expect(result.status).toBe("ready");
-    expect(rank).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.anything(), expect.stringContaining("design disagreement"), expect.any(Function), expect.any(Function), expect.any(AbortSignal));
+    expect(rank).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.anything(), expect.stringContaining("design disagreement"), expect.objectContaining({ onThrottle: expect.any(Function), onRequest: expect.any(Function) }), expect.any(AbortSignal));
     expect(rank).toHaveBeenCalledTimes(2);
   });
 
@@ -182,7 +182,7 @@ it("starts 16 requests in retrieval order, reduces concurrency on throttling, an
   const corpus = Array.from({length:40},(_,i)=>block(String(i),`${40-i}.md`,`conflict ${i}`));
   const pending: Array<() => void> = [];
   let active = 0, peak = 0;
-  const rank = vi.fn((_q, _p, _c, _ctx, throttle) => new Promise<any>(resolve => {
+  const rank = vi.fn((_q, _p, _c, _ctx, hooks: { onThrottle?: () => void }) => new Promise<any>(resolve => {
     active++; peak = Math.max(peak, active);
     pending.push(() => { active--; resolve({answers:{relevant:{noul:.8}}}); });
   }));
@@ -192,7 +192,7 @@ it("starts 16 requests in retrieval order, reduces concurrency on throttling, an
   const run = engine.run({...spec,contextPaths:[],criteria:{mode:"generic"}},1000,6,.5,undefined,partial);
   await vi.waitFor(()=>expect(rank).toHaveBeenCalledTimes(16));
   expect(rank.mock.calls.map(c=>c[1])).toEqual(corpus.slice(0,16).map(b=>b.text));
-  rank.mock.calls[0][4]();
+  rank.mock.calls[0][4].onThrottle!();
   pending.shift()!();
   await vi.waitFor(()=>expect(partial).toHaveBeenCalled());
   expect(rank).toHaveBeenCalledTimes(16);
@@ -208,6 +208,19 @@ it("starts 16 requests in retrieval order, reduces concurrency on throttling, an
   const result = await run;
   expect(peak).toBe(16);
   expect(result.judgements).toHaveLength(6);
+});
+
+it("holds enough passages in flight to fill a batching client's requests", async () => {
+  const corpus = Array.from({length:200},(_,i)=>block(String(i),`${200-i}.md`,`conflict ${i}`));
+  let active = 0, peak = 0;
+  const rank = vi.fn(() => new Promise<any>(resolve => {
+    active++; peak = Math.max(peak, active);
+    window.setTimeout(() => { active--; resolve({answers:{relevant:{noul:.8}}}); }, 0);
+  }));
+  const retrieval = () => ({ candidates: corpus.map((b,i)=>({...b,lexicalScore:200-i})) });
+  const engine = new QueryEngine({rank, batchSize: 4},()=>corpus,()=>[],"",undefined,retrieval);
+  await engine.run({...spec,contextPaths:[],criteria:{mode:"generic"}},200,6,.5);
+  expect(peak).toBe(64); // sixteen requests of four passages
 });
 
 it("reuses persisted content after moves but rescoring follows heading, rubric, and model changes", async () => {

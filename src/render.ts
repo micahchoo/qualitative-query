@@ -27,7 +27,8 @@ export async function renderResult(
     container.createDiv({ cls: "qq-status", text: `Shortlisted ${s.shortlisted} passages from ${s.searchable} searchable blocks · ${s.overlapRemoved} overlaps removed${s.truncated ? ` · Window limit ${s.windowLimit} reached; more matches were available` : ""}.` });
     container.createDiv({ cls: "qq-status", text: result.selection === "local"
       ? "Local matches · Jev minimum score does not apply."
-      : `${s.checked} checked · ${s.cached} cached · ${s.shared} shared · ${s.requested} new requests · ${s.retries} retries · ${s.skipped} skipped · ${s.passed} meet minimum score ${s.threshold}.` });
+      : `${s.checked} checked · ${s.cached} cached · ${s.shared} shared · ${s.requested} sent in ${s.requests} requests · ${s.retries} retries · ${s.skipped} skipped · ${s.passed} meet minimum score ${s.threshold}.` });
+    if (s.requests) container.createDiv({ cls: "qq-status", text: `Jev read ${s.inputTokens.toLocaleString()} input tokens · ${Math.round(s.requestMs / s.requests).toLocaleString()} ms average per request.` });
     if (s.contextChars) container.createDiv({ cls: "qq-status", text: `Explicit context: ${s.contextChars.toLocaleString()} / 48,000 characters.` });
   }
   if (result.belowThreshold?.length) {

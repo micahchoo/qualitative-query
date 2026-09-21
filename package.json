@@ -1,6 +1,6 @@
 {
   "name": "qualitative-query",
-  "version": "0.3.13",
+  "version": "0.3.14",
   "private": true,
   "description": "Ask your vault a question. Connect the passages that answer it.",
   "scripts": {
@@ -13,7 +13,8 @@
     "lint": "eslint src --max-warnings 0",
     "release:check": "node scripts/check-release.mjs",
     "release:package": "node scripts/package-release.mjs",
-    "release:verify": "npm run lint && npm run check && npm test && npm run smoke && npm run release:package"
+    "release:verify": "npm run lint && npm run check && npm test && npm run smoke && npm run release:package",
+    "probe:batching": "node_modules/.bin/esbuild scripts/probe-batching.ts --bundle --platform=node --format=esm --alias:obsidian=./scripts/probe-obsidian.ts --outfile=node_modules/.cache/qq-probe-batching.mjs && node node_modules/.cache/qq-probe-batching.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
