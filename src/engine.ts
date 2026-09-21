@@ -1,18 +1,20 @@
 import { checkSignal, SharedWork } from "./work";
 import type { RetrievalResult } from "./retrieval";
 import type { ScoreCache } from "./score-cache";
-import { MAX_CANDIDATES } from "./limits";
-import { shortlist } from "./search";
-import { JevClient } from "./jev";
+import { MAX_CANDIDATES, MAX_CONTEXT_CHARS } from "./limits";
+import type { JevRanker } from "./jev";
+import { modelText, scoreKey } from "./score-identity";
+import { displayText } from "./markdown";
 import type { Block, Candidate, Contribution, Judgement, QueryResult, QuerySpec, QueryStats } from "./types";
 
 const MAX_PASSAGE_CHARS = 24_000;
-const MAX_CONTEXT_CHARS = 48_000;
 const MAX_CACHE_ENTRIES = 512;
 const MAX_CONCURRENCY = 16;
 
 
 type ContextReader = (path: string) => Block[] | Promise<Block[]>;
+/** Local retrieval: the shortlist a question is judged from. `LocalRetrieval.search` in production. */
+export type Retrieval = (question: string, blocks: Block[], limit: number, signal?: AbortSignal) => RetrievalResult | Promise<RetrievalResult>;
 type WarningResult = QueryResult & { warning?: string };
 
 class QueryRunSuperseded extends Error {
@@ -86,12 +88,6 @@ class ConcurrencyGate {
   }
 }
 
-function stable(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
-  return `{${Object.keys(value as Record<string, unknown>).sort().map((key) => `${JSON.stringify(key)}:${stable((value as Record<string, unknown>)[key])}`).join(",")}}`;
-}
-
 function span(block: Block): number { return Math.max(0, block.lineEnd - block.lineStart); }
 
 /** Remove parent/child duplicates while retaining the most complete passage. */
@@ -124,12 +120,6 @@ function dedupeCandidates(candidates: Candidate[]): Candidate[] {
   return selected;
 }
 
-function displayText(block: Block): string { return block.renderText ?? block.text; }
-function modelText(block: Block): string {
-  const heading = block.headingPath.length ? `[Headings: ${block.headingPath.join(" > ")}]\n` : "";
-  return `${heading}${displayText(block)}`;
-}
-
 export class QueryEngine {
   private cache = new Map<string, Judgement>();
   private inFlight = new Map<string, SharedWork<Judgement>>();
@@ -139,19 +129,17 @@ export class QueryEngine {
   private readonly gate: ConcurrencyGate;
 
   constructor(
-    private readonly client: (Pick<JevClient, "rank"> & { batchSize?: number }) | null,
+    private readonly client: JevRanker | null,
     private readonly getBlocks: () => Block[],
+    private readonly retrieve: Retrieval,
     private readonly getSourceBlocks: ContextReader = () => [],
     /** Include provider/model identity when an engine is reused across clients. */
     private readonly cacheNamespace = "",
     private readonly persistentCache?: Pick<ScoreCache, "get" | "set"> & Partial<Pick<ScoreCache, "getMany">>,
-    private readonly retrieve: (question: string, blocks: Block[], limit: number, signal?: AbortSignal) => RetrievalResult | Promise<RetrievalResult> = (question, blocks, limit) => ({ candidates: shortlist(question, blocks, limit), truncated: shortlist(question, blocks, limit + 1).length > limit }),
   ) {
     // Hold enough passages in flight to fill the client's batches; requests stay near the cap.
     this.gate = new ConcurrencyGate(Math.max(1, client?.batchSize ?? 1));
   }
-
-  clearCache(): void { this.cache.clear(); }
 
   invalidate(): void {
     this.generation++;
@@ -279,10 +267,7 @@ export class QueryEngine {
   }
 
   private scoreKey(spec: QuerySpec, candidate: Candidate, context: string, legacy = false): string {
-    const text = modelText(candidate);
-    return stable({ namespace: this.cacheNamespace, question: spec.question, criteria: spec.criteria, context,
-      ...(legacy ? { candidate: { id: candidate.id, path: candidate.path, lineStart: candidate.lineStart, lineEnd: candidate.lineEnd, headingPath: candidate.headingPath, text } }
-        : { passage: text, keyVersion: 2 }) });
+    return scoreKey(this.cacheNamespace, spec, candidate, context, legacy);
   }
 
   private async readScores(keys: string[]): Promise<Map<string, Omit<Judgement, "candidate">>> {

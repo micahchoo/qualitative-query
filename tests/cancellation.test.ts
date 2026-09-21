@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { QueryEngine } from "../src/engine";
+import { engine as makeEngine } from "./helpers";
 import { JevClient } from "../src/jev";
 import type { Block, QuerySpec } from "../src/types";
 
@@ -11,7 +11,7 @@ const delay = () => new Promise(resolve => setTimeout(resolve, 0));
 describe("query lifetimes", () => {
   for (const failing of [1, 50, 100]) it(`stops requests and callbacks after failure ${failing}`, async () => {
     let calls = 0, late = 0, settled = false;
-    const engine = new QueryEngine({ rank: async () => { const call = ++calls; await delay(); if (call === failing) throw new Error("provider failed"); return response; } }, () => blocks);
+    const engine = makeEngine({ rank: async () => { const call = ++calls; await delay(); if (call === failing) throw new Error("provider failed"); return response; } }, () => blocks);
     await expect(engine.run(spec, 100, 6, 0.5, () => { if (settled) late++; }, () => { if (settled) late++; })).rejects.toThrow("provider failed");
     settled = true;
     const atSettlement = calls;
@@ -28,7 +28,7 @@ describe("query lifetimes", () => {
       transportSignal = signal;
       return new Promise<typeof response>(resolve => { finish = resolve; });
     });
-    const engine = new QueryEngine({ rank }, () => blocks.slice(0, 1));
+    const engine = makeEngine({ rank }, () => blocks.slice(0, 1));
     const closed = engine.run(spec, 1, 1, 0.5, undefined, undefined, controller.signal);
     const survivor = engine.run(spec, 1, 1, 0.5);
     await vi.waitFor(() => expect(rank).toHaveBeenCalledTimes(1));
@@ -46,7 +46,7 @@ describe("query lifetimes", () => {
       signals.push(signal);
       return new Promise<typeof response>((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
     });
-    const engine = new QueryEngine({ rank }, () => blocks);
+    const engine = makeEngine({ rank }, () => blocks);
     const run = engine.run(spec, 100, 6, 0.5, undefined, undefined, controller.signal);
     await vi.waitFor(() => expect(rank).toHaveBeenCalledTimes(16));
     controller.abort();

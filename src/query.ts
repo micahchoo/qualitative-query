@@ -26,6 +26,9 @@ function links(value: unknown): string[] {
   return [...value.matchAll(/!?\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g)].map((m) => m[1].trim());
 }
 
+/** A fenced query block, by its opening fence: the languages this plugin renders. */
+export const QUERY_FENCE = /^ {0,3}(?:`{3,}|~{3,})(?:qualitative-query|qq)\s*$/m;
+
 export function parseQuery(path: string, text: string, folder: string, blockSource?: string): QuerySpec {
   text = text.replace(/\r\n?/g, "\n");
   blockSource = blockSource?.replace(/\r\n?/g, "\n");

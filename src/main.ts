@@ -1,205 +1,28 @@
-import { applyInclusions, inclusionFor, updateInclusions } from "./manual-selection";
 import { readContextBlocks } from "./context";
 import { parseObject } from "./validation";
 declare const EMBEDDING_WORKER_SOURCE: string;
 import { QueryBuilder } from "./builder";
-import { bakeNote, BAKED_FOLDER, PendingSave } from "./bake";
-import { Notice, Component, MarkdownRenderChild, Plugin, TFile, type MarkdownPostProcessorContext, type TAbstractFile } from "obsidian";
+import { BAKED_FOLDER } from "./bake";
+import { Notice, Plugin, TFile, type MarkdownPostProcessorContext, type TAbstractFile } from "obsidian";
 import { EmbeddingIndex } from "./embeddings";
 import { downloadEmbeddings } from "./embedding-assets";
 import { LocalRetrieval } from "./retrieval";
 import { ScoreCache } from "./score-cache";
 import { VaultIndex } from "./indexer";
-import { parseQuery, resolveContext } from "./query";
-import { JevClient } from "./jev";
+import { QUERY_FENCE } from "./query";
+import { JevClient, type JevRanker } from "./jev";
 import { PassageBatcher } from "./batch";
 import { QueryEngine } from "./engine";
-import { renderLoading, renderResult } from "./render";
-import { expandBlock } from "./markdown";
-import { DEFAULT_SETTINGS, TYPESAFE_ENDPOINT, SettingsTab, normalizeSettings, type Settings } from "./settings";
-import type { Block, QueryResult, QuerySpec } from "./types";
-const SCORING_VERSION = "jev-v1";
-
-const QUERY_FENCE = /^ {0,3}(?:`{3,}|~{3,})(?:qualitative-query|qq)\s*$/m;
-
-/** Each rendered query owns its subscriptions, async generation, and Markdown children. */
-class QueryView extends MarkdownRenderChild {
-  private version = 0;
-  private run?: AbortController;
-  private stopped = false;
-  private saving = false;
-  private content?: Component;
-
-  constructor(
-    private readonly plugin: QualitativeQueryPlugin,
-    el: HTMLElement,
-    private readonly sourcePath: string,
-    private readonly blockSource?: string,
-    private readonly autoKey?: string,
-  ) { super(el); }
-
-  onload(): void {
-    this.plugin.views.add(this);
-    void this.refresh();
-  }
-
-  invalidate(): void { if (!this.saving) { this.version++; this.run?.abort(); } }
-
-  onunload(): void {
-    this.stopped = true;
-    this.run?.abort();
-    this.invalidate();
-    this.plugin.views.delete(this);
-    if (this.autoKey && this.plugin.autoViews.get(this.autoKey) === this) this.plugin.autoViews.delete(this.autoKey);
-    this.containerEl.empty();
-  }
-
-  async refresh(): Promise<void> {
-    if (this.stopped || this.saving) return;
-    this.run?.abort();
-    const run = this.run = new AbortController();
-    const version = ++this.version;
-    const current = () => !this.stopped && version === this.version && !this.plugin.stopped;
-    if (this.content) { this.removeChild(this.content); this.content = undefined; }
-    renderLoading(this.containerEl);
-    let spec: QuerySpec = { question: "", folder: this.plugin.settings.queryFolder, contextPaths: [], criteria: { mode: "generic" } };
-    try {
-      const file = this.plugin.app.vault.getAbstractFileByPath(this.sourcePath);
-      if (!(file instanceof TFile)) throw new Error("The query note no longer exists. Open its new location or close this view.");
-      const text = await this.plugin.app.vault.cachedRead(file);
-      if (!current()) return;
-      // A note with explicit query blocks does not also get an automatic view.
-      if (this.blockSource === undefined && QUERY_FENCE.test(text)) { this.containerEl.empty(); return; }
-      spec = parseQuery(file.path, text, this.plugin.settings.queryFolder, this.blockSource);
-      spec.contextPaths = [...resolveContext(this.plugin.app, file, spec.contextPaths)];
-      await this.plugin.index.whenReady();
-      if (!current()) return;
-      if (this.plugin.indexError) throw new Error(this.plugin.indexError);
-      if (this.plugin.clientError) throw new Error(this.plugin.clientError);
-      let result: QueryResult;
-      {
-        let completed = 0;
-        let total = 0;
-        const started = Date.now();
-        let rendering = Promise.resolve();
-        let partialVersion = 0;
-        const showProgress = () => {
-          if (!current()) return;
-          let status = this.containerEl.querySelector<HTMLElement>(".qq-progress");
-          if (!status) {
-            status = createDiv(); status.className = "qq-status qq-progress";
-            this.containerEl.prepend(status);
-          }
-          status.textContent = this.plugin.client ? `Jev is checking passages: ${completed}/${total} · ${Math.floor((Date.now() - started) / 1000)}s` : "Finding passages locally…";
-        };
-        const timer = window.setInterval(showProgress, 1000);
-        try {
-          result = await this.plugin.engine.run(spec, this.plugin.settings.candidateLimit, this.plugin.settings.resultLimit, spec.threshold ?? this.plugin.settings.threshold,
-            (done, count) => { completed = done; total = count; showProgress(); },
-            partial => {
-              const revision = ++partialVersion;
-              rendering = rendering.then(async () => {
-                const valid = () => current() && revision === partialVersion;
-                if (!valid()) return;
-                await this.display(partial, spec, valid);
-                showProgress();
-              }).catch(error => console.warn("Qualitative Query: partial rendering failed", error));
-            }, run.signal);
-        } finally {
-          window.clearInterval(timer);
-          partialVersion++;
-          await rendering;
-        }
-      }
-      if (!current()) return;
-      await this.display(result, spec, current, true);
-    } catch (error) {
-      if (!current()) return;
-      await this.display({ status: "error", candidates: [], judgements: [], error: error instanceof Error ? error.message : String(error) }, spec, current);
-    }
-  }
-
-  private async display(result: QueryResult, spec: QuerySpec, current: () => boolean, allowBake = false): Promise<void> {
-    const baseResult = result;
-    const queryFile = this.plugin.app.vault.getAbstractFileByPath(this.sourcePath);
-    const manual = allowBake && queryFile instanceof TFile
-      ? await applyInclusions(await this.plugin.app.vault.read(queryFile), spec, result, this.plugin.index.blocks)
-      : { result, missing: [] };
-    result = manual.result;
-    const content = new Component();
-    this.addChild(content);
-    const stage = createDiv();
-    stage.addClass("qq-view");
-    try {
-      await renderResult(this.plugin.app, stage, result, spec, content, (candidate, adjacent) =>
-        expandBlock(candidate, this.plugin.index.blocksForPath(candidate.path), adjacent),
-        allowBake && queryFile instanceof TFile ? async (judgement, include) => {
-          if (!current()) return;
-          const entry = await inclusionFor(judgement);
-          if (!current()) return;
-          this.saving = true;
-          try { await this.plugin.app.vault.process(queryFile, text => updateInclusions(text, spec, entry, include)); }
-          finally { this.saving = false; }
-          if (current()) await this.display(baseResult, spec, current, true);
-        } : undefined);
-      for (const missing of manual.missing) {
-        const warning = stage.createDiv({ cls: "qq-warning", text: missing.message });
-        const remove = warning.createEl("button", { text: "Remove inclusion" });
-        content.registerDomEvent(remove, "click", async () => {
-          if (!current() || !(queryFile instanceof TFile) || remove.disabled) return;
-          remove.disabled = true; this.saving = true;
-          try {
-            await this.plugin.app.vault.process(queryFile, text => updateInclusions(text, spec, missing.entry, false));
-            this.saving = false;
-            if (current()) await this.display(baseResult, spec, current, true);
-          } catch (error) { this.saving = false; remove.disabled = false; new Notice(error instanceof Error ? error.message : String(error)); }
-        });
-      }
-      if (allowBake && result.status === "ready" && result.judgements.length) {
-        const tools = createDiv();
-        tools.className = "qq-bake-actions";
-        const button = tools.createEl("button", { text: "Save passages" });
-        tools.createEl("small", { text: " Creates a note with these passages linked to their sources. Adds missing block IDs to source notes. Nearby context is not saved." });
-        const saveStatus = tools.createEl("small", { text: "" });
-        const controller = new AbortController();
-        content.register(() => controller.abort());
-        let save = () => bakeNote(this.plugin.app, result, spec, this.sourcePath, {
-          signal: controller.signal,
-          onWait: (pending, ms) => saveStatus.setText(` Waiting for ${pending} source links · timeout in ${Math.ceil(ms / 1000)}s.`),
-        });
-        content.registerDomEvent(button, "click", async () => {
-          if (!current() || controller.signal.aborted) return;
-          button.disabled = true;
-          this.saving = true;
-          try {
-            const file = await save();
-            this.saving = false;
-            saveStatus.setText(" Saved.");
-            new Notice("Passages saved. Open a source note’s backlinks to see the connection.");
-            await this.plugin.app.workspace.getLeaf(true).openFile(file, { state: { mode: "preview" } });
-          } catch (error) {
-            if (controller.signal.aborted) return;
-            if (error instanceof PendingSave) { save = error.retry; button.setText("Retry save"); }
-            else this.saving = false;
-            saveStatus.setText(error instanceof Error ? error.message : String(error)); button.disabled = false;
-          }
-        });
-        stage.prepend(tools);
-      }
-      if (!current()) { this.removeChild(content); return; }
-      if (this.content) this.removeChild(this.content);
-      this.content = content;
-      this.containerEl.empty();
-      this.containerEl.appendChild(stage);
-    } catch (error) { this.removeChild(content); throw error; }
-  }
-}
+import { QueryView } from "./query-view";
+import { DEFAULT_SETTINGS, SettingsTab, normalizeSettings, type Settings } from "./settings";
+import { scoreNamespace } from "./score-identity";
+import type { Block } from "./types";
 
 export default class QualitativeQueryPlugin extends Plugin {
   settings: Settings = { ...DEFAULT_SETTINGS };
   index!: VaultIndex;
   engine!: QueryEngine;
-  client: (Pick<JevClient, "rank"> & { batchSize?: number }) | null = null;
+  client: JevRanker | null = null;
   private batcher?: PassageBatcher;
   clientError = "";
   indexError = "";
@@ -222,7 +45,7 @@ export default class QualitativeQueryPlugin extends Plugin {
     }), () => downloadEmbeddings(this.app.vault.adapter, this.pluginDirectory()));
     this.addCommand({ id: "build-query", name: "Ask your vault", callback: () => new QueryBuilder(this.app, this.settings.queryFolder).open() });
     this.addRibbonIcon("search", "Ask your vault", () => new QueryBuilder(this.app, this.settings.queryFolder).open());
-    const directory = this.manifest?.dir ?? `${this.app.vault.configDir}/plugins/qualitative-query`;
+    const directory = this.pluginDirectory();
     const cachePath = `${directory}/scores-v1.json`;
     const adapter = this.app.vault.adapter;
     if (adapter) {
@@ -318,10 +141,8 @@ export default class QualitativeQueryPlugin extends Plugin {
         this.client = this.settings.passagesPerRequest > 1 ? (this.batcher = new PassageBatcher(client, this.settings.passagesPerRequest)) : client;
       }
     } catch (error) { this.client = null; this.clientError = error instanceof Error ? error.message : String(error); }
-    // The batch size is part of the score's identity: a passage judged beside others was asked
-    // a differently shaped question, so its score is only reused for that same shape.
-    const namespace = `${SCORING_VERSION}:${TYPESAFE_ENDPOINT}:${this.settings.model}${this.client?.batchSize && this.client.batchSize > 1 ? `:batch-${this.client.batchSize}` : ""}`;
-    if (this.index) this.engine = new QueryEngine(this.client, () => this.searchableBlocks(), path => readContextBlocks(this.app, path), namespace, this.scoreCache, (question, blocks, limit, signal) => this.retrieval.search(question, blocks, limit, signal));
+    const namespace = scoreNamespace(this.settings.model, this.client?.batchSize);
+    if (this.index) this.engine = new QueryEngine(this.client, () => this.searchableBlocks(), (question, blocks, limit, signal) => this.retrieval.search(question, blocks, limit, signal), path => readContextBlocks(this.app, path), namespace, this.scoreCache);
     this.scheduleQueries();
   }
 

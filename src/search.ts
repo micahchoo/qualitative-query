@@ -28,6 +28,9 @@ function collectHashes(value: string): Uint32Array {
 
 function queryHashes(value: string): Uint32Array { return collectHashes(value); }
 
+/** Two passages are copies of one another when their text agrees up to whitespace. */
+function fingerprintOf(text: string): string { return text.replace(/\s+/g, " ").trim(); }
+
 /** Prepare one block while it is being indexed, instead of during a query. */
 export function prepareSearchBlock(block: Block): void {
   if (!metadata.has(block)) {
@@ -43,63 +46,6 @@ export function prepareSearchBlock(block: Block): void {
 
 export function prepareSearchBlocks(blocks: readonly Block[]): void {
   for (const block of blocks) prepareSearchBlock(block);
-}
-
-/** Small, deterministic lexical shortlist. It is not a qualitative judgement. */
-function* scanShortlist(question: string, blocks: Block[], limit: number, scope?: Set<string>): Generator<void, Candidate[]> {
-  const query = queryHashes(question);
-  if (!query.length) return [];
-  const querySet = new Set(query);
-  const frequencies = new Map<number, number>();
-  const matches: Array<{ block: Block; counts: Map<number, number>; length: number }> = [];
-  let documents = 0;
-  let totalLength = 0;
-  let scanned = 0;
-  for (const block of blocks) {
-    if (++scanned % 256 === 0) yield;
-    if (scope && !scope.has(block.path)) continue;
-    prepareSearchBlock(block);
-    const info = metadata.get(block)!;
-    documents++;
-    totalLength += info.length;
-    const counts = new Map<number, number>();
-    for (let i = 0; i < info.terms.length; i += 2) if (querySet.has(info.terms[i])) counts.set(info.terms[i], info.terms[i + 1]);
-    for (const token of counts.keys()) frequencies.set(token, (frequencies.get(token) ?? 0) + 1);
-    if (counts.size) matches.push({ block, counts, length: info.length });
-  }
-  // BM25: rare query terms matter, and length normalization is bounded.
-  const averageLength = Math.max(1, totalLength / Math.max(1, documents));
-  const scored: Candidate[] = [];
-  for (const { block, counts, length } of matches) {
-    if (++scanned % 256 === 0) yield;
-    let score = 0;
-    for (const [token, count] of counts) {
-      const frequency = frequencies.get(token)!;
-      const idf = Math.log(1 + (documents - frequency + 0.5) / (frequency + 0.5));
-      score += idf * (count * 2.2) / (count + 1.2 * (0.75 + 0.25 * length / averageLength));
-    }
-    scored.push({ ...block, lexicalScore: score * (1 + Math.log(counts.size)) });
-  }
-  scored.sort((a, b) => b.lexicalScore - a.lexicalScore || a.id.localeCompare(b.id));
-  // Prefer distinct text before spending scarce model calls on archived copies.
-  // Retain duplicate locations if there are not enough distinct candidates.
-  const seen = new Set<string>();
-  const distinct: Candidate[] = [];
-  const duplicates: Candidate[] = [];
-  for (const candidate of scored) {
-    const fingerprint = candidate.text.replace(/\s+/g, " ").trim();
-    if (seen.has(fingerprint)) duplicates.push(candidate);
-    else { seen.add(fingerprint); distinct.push(candidate); }
-  }
-  return [...distinct, ...duplicates].slice(0, Math.max(1, limit));
-}
-
-
-export function shortlist(question: string, blocks: Block[], limit: number, scope?: Set<string>): Candidate[] {
-  const work = scanShortlist(question, blocks, limit, scope);
-  let step = work.next();
-  while (!step.done) step = work.next();
-  return step.value;
 }
 
 interface SearchCorpus {
@@ -124,7 +70,7 @@ function* buildCorpus(blocks: Block[]): Generator<void, SearchCorpus> {
     const info = metadata.get(block)!;
     corpus.totalLength += info.length;
     corpus.byId.set(block.id, block);
-    const text = info.fingerprint ??= block.text.replace(/\s+/g, " ").trim();
+    const text = info.fingerprint ??= fingerprintOf(block.text);
     const first = firstText.get(text);
     if (first === undefined) firstText.set(text, index);
     else {
@@ -241,24 +187,14 @@ export async function shortlistAsync(question: string, blocks: Block[], limit: n
 }
 
 /** Reuse the corpus lookup rather than allocating one full-vault map per query. */
-export async function hybridShortlistAsync(question: string, blocks: Block[], semantic: Array<{ id: string; score: number }>, limit: number, keywords: Candidate[], signal?: AbortSignal): Promise<Candidate[]> {
+export async function hybridShortlistAsync(_question: string, blocks: Block[], semantic: Array<{ id: string; score: number }>, limit: number, keywords: Candidate[], signal?: AbortSignal): Promise<Candidate[]> {
   const corpus = await searchCorpus(blocks, signal);
   checkSignal(signal);
-  return cooperative(fuseShortlist(question, blocks, semantic, limit, keywords, corpus.byId), signal, true);
+  return cooperative(fuseShortlist(semantic, limit, keywords, corpus.byId), signal, true);
 }
 
 /** Weighted reciprocal-rank fusion keeps lexical and cosine scales separate. */
-export function hybridShortlist(question: string, blocks: Block[], semantic: Array<{ id: string; score: number }>, limit: number, keywords?: Candidate[]): Candidate[] {
-  const work = fuseShortlist(question, blocks, semantic, limit, keywords);
-  let next = work.next();
-  while (!next.done) next = work.next();
-  return next.value;
-}
-
-function* fuseShortlist(question: string, blocks: Block[], semantic: Array<{ id: string; score: number }>, limit: number, keywords?: Candidate[], lookup?: Map<string, Block>): Generator<void, Candidate[]> {
-  const pool = Math.max(limit * 4, 32);
-  const lexical = keywords ?? shortlist(question, blocks, pool);
-  const byId = lookup ?? new Map(blocks.map(block => [block.id, block]));
+function* fuseShortlist(semantic: Array<{ id: string; score: number }>, limit: number, lexical: Candidate[], byId: Map<string, Block>): Generator<void, Candidate[]> {
   const candidates = new Map<string, Candidate>();
   lexical.forEach((candidate, rank) => candidates.set(candidate.id, { ...candidate, retrievalScore: 0.65 / (60 + rank + 1) }));
   semantic.forEach((hit, rank) => {
@@ -276,7 +212,7 @@ function* fuseShortlist(question: string, blocks: Block[], semantic: Array<{ id:
   let visited = 0;
   for (const candidate of ranked) {
     if (++visited % 128 === 0) yield;
-    const key = candidate.text.replace(/\s+/g, " ").trim();
+    const key = fingerprintOf(candidate.text);
     if (seen.has(key)) copies.push(candidate); else { seen.add(key); unique.push(candidate); }
   }
   return [...unique, ...copies].slice(0, Math.max(1, limit));

@@ -267,7 +267,8 @@ function isListSibling(block: Block, other: Block): boolean {
   return block.kind === "list" && other.kind === "list" && block.parentId === other.parentId;
 }
 
-function displayText(block: Block): string {
+/** What the reader sees for a block: the assembled list context when there is one, else its text. */
+export function displayText(block: Block): string {
   return block.renderText ?? block.text;
 }
 

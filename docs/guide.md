@@ -100,14 +100,14 @@ Source links open the original note at the passage.
 
 ## Connect the passages
 
-Select **Save passages** after scoring completes.
+Select **Save passages** after scoring completes. The saved note holds the passages shown: a passage hidden because a wider one already covers it is not saved, and a passage you included by hand always is. The saved note holds the passages shown: a passage hidden because a wider one already covers it is not saved, and a passage you included by hand always is. The saved note holds the passages shown: a passage hidden because a wider one already covers it is not saved, and a passage you included by hand always is.
 The plugin writes a new note in `Baked queries` with the selected blocks in their current order.
 The query remains live. The saved selection does not change with later query results.
 
 Native embeds keep source text live and create backlinks to the selection note.
 Saving passages reuses existing block IDs and adds missing IDs to source Markdown.
 The plugin checks source ranges, then waits for Obsidian to index the exact IDs.
-A countdown shows the remaining wait before timeout. **Retry save** waits again using the IDs already written.
+A countdown shows the remaining wait before timeout. **Retry save** waits again using the IDs already written. The view keeps updating while a save waits; a change to the vault during the save is applied when the save ends. The view keeps updating while a save waits; a change to the vault during the save is applied when the save ends. The view keeps updating while a save waits; a change to the vault during the save is applied when the save ends.
 Overlap errors name the source file and conflicting line ranges.
 The link back to the query uses its full path to avoid same-name ambiguity.
 

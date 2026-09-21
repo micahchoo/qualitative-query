@@ -1,3 +1,12 @@
+# 0.3.15
+
+- Save exactly the passages shown. When nearby text is shown, a passage that an earlier widened passage already covers is not drawn; it was still written into the saved note. Rendering and **Save passages** now read one Selection. A passage you included by hand is always shown and always saved.
+- A question view stays live while a save waits on Obsidian to index new block IDs. Until now a pending save held the view frozen to every vault change until **Retry save** succeeded. A change that arrives during a save is applied once the save ends.
+- What identifies a cached score (scoring version, endpoint, model, batch size) is declared in one place, and the endpoint requests go to is the one cached scores are keyed by.
+- Internal: the query view moved out of `main.ts` with its state as a pure module; local retrieval is a required argument of the engine, so the engine's tests run on the shipped keyword retrieval rather than a second BM25 that never shipped; that second implementation is deleted and the async ranking is measured against a captured reference.
+
+No change to stored data, saved questions or the score cache's contents.
+
 # 0.3.14
 
 - Send several passages to Jev in one request. A question that shortlists 1,000 passages now costs about 100 requests instead of 1,000, and re-sends the question and any context notes once per request rather than once per passage. Set **Passages per request** to 1 to check each passage on its own.

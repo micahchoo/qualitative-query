@@ -1,7 +1,7 @@
 import { Component, MarkdownRenderer, TFile, type App } from "obsidian";
-import type { Block, Candidate, Judgement, QueryResult, QuerySpec } from "./types";
-
-type Expansion = (candidate: Candidate, adjacent: number) => Block;
+import type { Block, Judgement, QueryResult, QuerySpec } from "./types";
+import { visibleSelection, type Expansion } from "./selection";
+import { MAX_CONTEXT_CHARS } from "./limits";
 
 /** Only the fence language changes; authored source content remains intact. */
 export function inertQueryBlocks(text: string): string {
@@ -29,7 +29,7 @@ export async function renderResult(
       ? "Local matches · Jev minimum score does not apply."
       : `${s.checked} checked · ${s.cached} cached · ${s.shared} shared · ${s.requested} sent in ${s.requests} requests · ${s.retries} retries · ${s.skipped} skipped · ${s.passed} meet minimum score ${s.threshold}.` });
     if (s.requests) container.createDiv({ cls: "qq-status", text: `Jev read ${s.inputTokens.toLocaleString()} input tokens · ${Math.round(s.requestMs / s.requests).toLocaleString()} ms average per request.` });
-    if (s.contextChars) container.createDiv({ cls: "qq-status", text: `Explicit context: ${s.contextChars.toLocaleString()} / 48,000 characters.` });
+    if (s.contextChars) container.createDiv({ cls: "qq-status", text: `Explicit context: ${s.contextChars.toLocaleString()} / ${MAX_CONTEXT_CHARS.toLocaleString()} characters.` });
   }
   if (result.belowThreshold?.length) {
     const below = result.belowThreshold;
@@ -56,14 +56,10 @@ export async function renderResult(
     container.createDiv({ cls: result.status === "error" ? "qq-error" : "qq-status", text: result.error ?? "No matching passages found. Try a broader question." });
     return;
   }
-  const visibleRanges: Array<{ path: string; start: number; end: number }> = [];
-  for (const judgement of result.judgements) {
+  for (const { judgement, block: initial } of visibleSelection(result.judgements, spec.adjacent ?? 0, expand)) {
     if (!active) return;
     const original = judgement.candidate;
     let adjacent = spec.adjacent ?? 0;
-    const initial = adjacent && expand ? expand(original, adjacent) : original;
-    if (visibleRanges.some(range => range.path === initial.path && range.start <= initial.lineStart && range.end >= initial.lineEnd)) continue;
-    visibleRanges.push({ path: initial.path, start: initial.lineStart, end: initial.lineEnd });
     const item = container.createDiv({ cls: "qq-result" });
     const meta = item.createDiv({ cls: "qq-result-meta" });
     const link = meta.createEl("a", { text: original.path, href: "#" });

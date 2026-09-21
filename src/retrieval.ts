@@ -4,6 +4,22 @@ import { hybridShortlistAsync, shortlistAsync } from "./search";
 import type { Block, Candidate } from "./types";
 
 export interface RetrievalResult { candidates: Candidate[]; warning?: string; truncated?: boolean; }
+
+/** Candidates are ranked from a pool wider than the limit, so duplicates can be pushed behind distinct passages. */
+const pool = (limit: number): number => Math.max(limit * 4, 32);
+/** The first `limit`, and whether more were available: asked once, at limit + 1, never by a second scan. */
+function bounded(ranked: Candidate[], limit: number): RetrievalResult {
+  return { candidates: ranked.slice(0, limit), truncated: ranked.length > limit };
+}
+
+/**
+ * The shortlist by keyword alone. What ships when the semantic index is absent, and what
+ * the engine's tests run on: retrieval is a required argument of the engine, so there is no
+ * second implementation for a test to exercise instead of this one.
+ */
+export async function keywordRetrieval(question: string, blocks: Block[], limit: number, signal?: AbortSignal): Promise<RetrievalResult> {
+  return bounded(await shortlistAsync(question, blocks, pool(limit), signal), limit);
+}
 type SemanticIndex = Pick<EmbeddingIndex, "search" | "dispose" | "status">;
 const FALLBACK = "Using keyword search. Restart local search in settings to retry. If the model is missing, select Download search model.";
 
@@ -50,15 +66,14 @@ export class LocalRetrieval {
   private async searchCurrent(question: string, blocks: Block[], limit: number, signal: AbortSignal): Promise<RetrievalResult> {
     checkSignal(signal);
     const index = this.semantic ??= this.createIndex();
-    const pool = Math.max(limit * 4, 32);
     const [keywords, hits] = await Promise.all([
-      shortlistAsync(question, blocks, pool, signal),
-      index.search(question, blocks, pool, signal).catch(() => { checkSignal(signal); return null; }),
+      shortlistAsync(question, blocks, pool(limit), signal),
+      index.search(question, blocks, pool(limit), signal).catch(() => { checkSignal(signal); return null; }),
     ]);
     checkSignal(signal);
     if (this.stopped) throw new Error("Local search is closed.");
     const ranked = hits ? await hybridShortlistAsync(question, blocks, hits, limit + 1, keywords, signal) : keywords;
-    return { candidates: ranked.slice(0, limit), truncated: ranked.length > limit, ...(hits ? {} : { warning: FALLBACK }) };
+    return { ...bounded(ranked, limit), ...(hits ? {} : { warning: FALLBACK }) };
   }
 
   private reset(): void {

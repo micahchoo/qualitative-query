@@ -1,12 +1,16 @@
+import { readFileSync } from "node:fs";
 import { expect, it, vi } from "vitest";
-import { shortlist, shortlistAsync, prepareSearchBlocks, hybridShortlist, hybridShortlistAsync } from "../src/search";
+import { shortlistAsync, prepareSearchBlocks, hybridShortlistAsync } from "../src/search";
 import { TopK } from "../src/top-k";
 import { SharedWork } from "../src/work";
-import type { Block } from "../src/types";
+import type { Block, Candidate } from "../src/types";
 
 const block = (id: number, text: string): Block => ({ id: `${id % 3 === 0 ? "a" : "Z"}-${id}`, path: `${id}.md`, lineStart: 1, lineEnd: 1, text, searchText: text, kind: "paragraph", headingPath: [] });
+/** Ranking captured 2026-09-21 from the reference full-scan BM25, before that implementation was deleted. */
+const reference: Record<string, Array<[string, number]>> = JSON.parse(readFileSync(new URL("./fixtures/bm25-reference.json", import.meta.url), "utf8"));
+const scored = (candidates: Candidate[], key: "lexicalScore" | "retrievalScore") => candidates.map(candidate => [candidate.id, candidate[key]]);
 
-it("matches reference BM25 ordering, exact scores and duplicate preference", async () => {
+it("matches the reference BM25 ordering, exact scores and duplicate preference", async () => {
   let seed = 13;
   const random = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed; };
   const words = ["conflict", "mediation", "peace", "work", "art", "other"];
@@ -15,12 +19,12 @@ it("matches reference BM25 ordering, exact scores and duplicate preference", asy
   prepareSearchBlocks(blocks);
   for (const question of ["conflict mediation art", "art conflict mediation", "peace peace", "missing", "the and"]) {
     for (const limit of [1, 6, 32, 1000]) {
-      expect(await shortlistAsync(question, blocks, limit)).toEqual(shortlist(question, blocks, limit));
+      expect(scored(await shortlistAsync(question, blocks, limit), "lexicalScore")).toEqual(reference[`${question}|${limit}`]);
     }
   }
   const keywords = await shortlistAsync("conflict", blocks, 100);
   const hits = blocks.slice(30, 100).map((value, i) => ({ id: value.id, score: 0.8 - i / 1000 }));
-  expect(await hybridShortlistAsync("conflict", blocks, hits, 20, keywords)).toEqual(hybridShortlist("conflict", blocks, hits, 20, keywords));
+  expect(scored(await hybridShortlistAsync("conflict", blocks, hits, 20, keywords), "retrievalScore")).toEqual(reference.hybrid);
 });
 
 it("builds postings once for concurrent questions and never rescans a warm corpus", async () => {
@@ -40,7 +44,8 @@ it("can cancel a cold corpus and immediately start a replacement", async () => {
   controller.abort();
   const current = shortlistAsync("conflict", blocks, 6);
   await expect(stale).rejects.toThrow(/cancelled/);
-  expect(await current).toEqual(shortlist("conflict", blocks, 6));
+  // A fresh array is a fresh corpus: the same answer computed without the cancelled build.
+  expect(await current).toEqual(await shortlistAsync("conflict", [...blocks], 6));
 });
 
 it("retains exact top-K ordering with logarithmic comparison count", () => {
@@ -92,12 +97,23 @@ it("preserves deterministic text ties in a bounded heap", () => {
 });
 
 it("preserves best representatives and duplicate fill across many differently headed copies", async () => {
-  const blocks = Array.from({ length: 2500 }, (_, i) => {
+  const make = () => Array.from({ length: 2500 }, (_, i) => {
     const value = block(i, `Repeated conflict passage ${i % 173}`);
     value.searchText = `${value.text} ${i % 3 === 0 ? "mediation mediation" : "art"}`;
     return value;
   });
-  for (const question of ["conflict", "mediation art", "art 7", "mediation"])
-    for (const limit of [6, 1000, 4000])
-      expect(await shortlistAsync(question, blocks, limit)).toEqual(shortlist(question, blocks, limit));
+  const blocks = make();
+  for (const question of ["conflict", "mediation art", "art 7", "mediation"]) {
+    for (const limit of [6, 1000, 4000]) {
+      const result = await shortlistAsync(question, blocks, limit);
+      const texts = result.map(candidate => candidate.text);
+      const firstRepeat = texts.findIndex((text, i) => texts.indexOf(text) < i);
+      // Every distinct passage comes before any archived copy of one already listed.
+      const distinctCount = new Set(texts).size;
+      expect(firstRepeat === -1 ? texts.length : firstRepeat).toBe(distinctCount);
+      expect(result.length).toBe(Math.min(limit, result.length));
+      // The same answer from a cold corpus.
+      expect(await shortlistAsync(question, make(), limit)).toEqual(result);
+    }
+  }
 });

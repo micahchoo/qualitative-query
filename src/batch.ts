@@ -1,4 +1,5 @@
 import { cancelled, checkSignal } from "./work";
+import { bucketKey } from "./score-identity";
 import type { JevClient, JevPassage, RankHooks } from "./jev";
 import type { JevResponse, QueryCriteria } from "./types";
 
@@ -57,7 +58,7 @@ export class PassageBatcher {
     // Compare by identity first. Explicit context reaches 48,000 characters, and rebuilding a
     // key that long once per passage is the cost this class exists to remove.
     for (const entry of this.recent) if (entry.question === question && entry.criteria === criteria && entry.context === context) return entry.key;
-    const key = `${question}\u0000${JSON.stringify(criteria)}\u0000${context}`;
+    const key = bucketKey(question, criteria, context);
     this.recent.unshift({ question, criteria, context, key });
     while (this.recent.length > 4) this.recent.pop();
     return key;

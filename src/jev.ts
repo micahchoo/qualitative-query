@@ -1,5 +1,6 @@
 import { checkSignal } from "./work";
 import { requestUrl } from "obsidian";
+import { ENDPOINT } from "./score-identity";
 import type { JevResponse, QueryCriteria } from "./types";
 
 export interface JevTransport { post(url: string, headers: Record<string, string>, body: unknown, signal?: AbortSignal): Promise<{ status: number; json: unknown }> }
@@ -8,8 +9,6 @@ export interface RequestReport { requests: number; passages: number; inputTokens
 /** Per-caller notices. `onRequest` reports one completed HTTP request, not one passage. */
 export interface RankHooks { onThrottle?: () => void; onRetry?: () => void; onRequest?: (report: RequestReport) => void }
 const defaultTransport: JevTransport = { post: async (url, headers, body) => { const response = await requestUrl({ url, method: "POST", headers, body: JSON.stringify(body), throw: false }); return { status: response.status, json: response.json }; } };
-
-const ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 
 /**
  * Named questions for one passage. Ids are local; TypeSafe does not send them to the model.
@@ -30,6 +29,9 @@ function questionsFor(question: string, criteria: QueryCriteria, field?: string)
   }
   return questions;
 }
+
+/** What the engine asks of a client: one passage judged, and how many travel together. */
+export type JevRanker = Pick<JevClient, "rank"> & { batchSize?: number };
 
 export class JevClient {
   constructor(private readonly apiKey: string, private readonly model: string, private readonly transport: JevTransport = defaultTransport, private readonly sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms))) {}

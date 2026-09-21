@@ -4,7 +4,6 @@ import type QualitativeQueryPlugin from "./main";
 
 export interface Settings { apiKey: string; model: string; queryFolder: string; candidateLimit: number; passagesPerRequest: number; resultLimit: number; threshold: number; excludedFolders: string; }
 export const MAX_PASSAGES_PER_REQUEST = 50;
-export const TYPESAFE_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 export const DEFAULT_SETTINGS: Settings = { apiKey: "", model: "jev-1.13.0", queryFolder: "Queries", candidateLimit: 1000, passagesPerRequest: 10, resultLimit: 8, threshold: 0.45, excludedFolders: "" };
 
 /** Whitelist retained settings; discard retired provider, endpoint and model paths. */

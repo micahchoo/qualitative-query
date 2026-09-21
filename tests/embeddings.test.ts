@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { StaticEmbeddings, cosine } from "../src/static-embeddings";
-import { hybridShortlist } from "../src/search";
+import { hybridShortlistAsync, shortlistAsync } from "../src/search";
 import { parseMarkdown } from "../src/markdown";
 
 const fixture = JSON.parse(readFileSync(new URL("./fixtures/embedding-reference.json", import.meta.url), "utf8"));
@@ -28,10 +28,11 @@ describe("downloaded static embeddings", () => {
   });
 });
 
-it("combines semantic-only candidates with strong keyword matches deterministically", () => {
+it("combines semantic-only candidates with strong keyword matches deterministically", async () => {
   const blocks = [...parseMarkdown("a.md", "Ochin community work."), ...parseMarkdown("b.md", "Neighbourhood collaboration."), ...parseMarkdown("c.md", "A cake recipe.")];
   const hits = [{id:blocks[1].id, score:0.8}];
-  const result = hybridShortlist("Ochin", blocks, hits, 2);
+  const keywords = await shortlistAsync("Ochin", blocks, 32);
+  const result = await hybridShortlistAsync("Ochin", blocks, hits, 2, keywords);
   expect(result.map(row => row.path)).toEqual(["a.md", "b.md"]);
-  expect(hybridShortlist("Ochin", blocks, hits, 2)).toEqual(result);
+  expect(await hybridShortlistAsync("Ochin", blocks, hits, 2, keywords)).toEqual(result);
 });
